@@ -1,7 +1,7 @@
 site_name: zonal
 site_description: AZ-affine client-side load balancing over AWS Cloud Map — keep east-west traffic in-AZ and cut the cross-AZ bill.
-repo_url: https://github.com/OWNER/zonal
-repo_name: OWNER/zonal
+repo_url: https://github.com/fmiquel90/zonal
+repo_name: fmiquel90/zonal
 edit_uri: edit/main/docs/
 
 extra_css:
