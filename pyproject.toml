@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "AZ-affine client-side load balancing over AWS Cloud Map"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Proprietary" }
+license = { text = "Apache-2.0" }
 dependencies = [
     "boto3>=1.28",
     "requests>=2.28",

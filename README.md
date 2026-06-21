@@ -10,7 +10,7 @@
 <p align="center">
   <a href="#"><img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="python"></a>
   <a href="#-local-development"><img src="https://img.shields.io/badge/tests-unit%20%2B%20MiniStack-brightgreen" alt="tests"></a>
-  <a href="#-license"><img src="https://img.shields.io/badge/license-Proprietary-lightgrey" alt="license"></a>
+  <a href="#-license"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="license"></a>
   <a href="https://fmiquel90.github.io/zonal/"><img src="https://img.shields.io/badge/docs-online-0f9b8e" alt="docs"></a>
   <a href="#"><img src="https://img.shields.io/badge/AWS-Cloud%20Map-FF9900?logo=amazonaws&logoColor=white" alt="aws"></a>
 </p>
@@ -308,4 +308,4 @@ python examples/local_demo.py
 
 ## 📄 License
 
-Proprietary — internal use only. All rights reserved. See [LICENSE](LICENSE).
+Licensed under the [Apache License 2.0](LICENSE).
