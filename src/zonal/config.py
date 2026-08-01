@@ -28,6 +28,7 @@ class RegisterConfig:
     # attributes the other side reads.
     ip_attribute: str = "AWS_INSTANCE_IPV4"
     port_attribute: str = "AWS_INSTANCE_PORT"
+    endpoint_url: str | None = None  # custom Cloud Map endpoint (VPC endpoint, or an emulator)
 
 
 @dataclass
@@ -49,3 +50,4 @@ class HealthConfig:
     az_attribute: str = "AZID"
     ip_attribute: str = "AWS_INSTANCE_IPV4"
     port_attribute: str = "AWS_INSTANCE_PORT"
+    endpoint_url: str | None = None  # custom Cloud Map endpoint (VPC endpoint, or an emulator)

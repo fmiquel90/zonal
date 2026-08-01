@@ -18,11 +18,13 @@ zonal-healthcheck --namespace services.internal --service backend --region eu-we
 ```
 
 If your hosts register under non-default Cloud Map attribute keys, the daemon has to be told, or it
-lists instances it cannot parse and sweeps zero hosts:
+lists instances it cannot parse and sweeps zero hosts. `--endpoint-url` points it at a VPC endpoint
+or a local emulator:
 
 ```bash
 zonal-healthcheck --namespace services.internal --service backend \
-    --ip-attribute MY_IPV4 --port-attribute MY_PORT
+    --ip-attribute MY_IPV4 --port-attribute MY_PORT \
+    --endpoint-url http://localhost:4566
 ```
 
 ## What a sweep does

@@ -27,6 +27,8 @@
   working beats an empty cache.
 - **Starts-empty is safe.** `wait_ready()` returns once the first discovery completes, even if it
   found zero hosts; `pick()` then raises `NoHealthyHostError` rather than hanging.
-- **Custom endpoints.** When `endpoint_url` is set (VPC endpoint, MiniStack, LocalStack), zonal
-  disables botocore's `data-` host prefix automatically — `DiscoverInstances` is a data-plane call
-  whose prefix points nowhere against a custom endpoint.
+- **Custom endpoints.** All three configs take `endpoint_url` (and the daemon takes
+  `--endpoint-url`), so callers, registering hosts and the health daemon can all be pointed at a
+  VPC endpoint or an emulator. Setting it also disables botocore's `data-` host prefix
+  automatically — `DiscoverInstances` is a data-plane call whose prefix resolves to nothing against
+  a custom endpoint (you would see `data-localhost` in the error).

@@ -7,7 +7,7 @@ import requests
 
 from ._base import poll_forever
 from .config import HealthConfig
-from .discovery import parse_instances
+from .discovery import _boto_config, parse_instances
 from .log import configure_json_logging, get_logger
 from .model import Host
 
@@ -63,7 +63,12 @@ class HealthChecker:
 
     def __init__(self, config: HealthConfig, *, sd_client=None, session: requests.Session | None = None):
         self._cfg = config
-        self._sd = sd_client or boto3.client("servicediscovery", region_name=config.region)
+        self._sd = sd_client or boto3.client(
+            "servicediscovery",
+            region_name=config.region,
+            endpoint_url=config.endpoint_url,
+            config=_boto_config(config.endpoint_url),
+        )
         self._service_id = config.service_id or resolve_service_id(
             self._sd, config.namespace, config.service
         )
@@ -200,6 +205,7 @@ def main(argv=None) -> None:
     p.add_argument("--service", required=True)
     p.add_argument("--service-id")
     p.add_argument("--region")
+    p.add_argument("--endpoint-url", help="custom Cloud Map endpoint (VPC endpoint, or an emulator)")
     p.add_argument("--health-path", default="/health")
     p.add_argument("--scheme", default="http")
     p.add_argument("--interval", type=float, default=10.0)
@@ -221,6 +227,7 @@ def main(argv=None) -> None:
         service=args.service,
         service_id=args.service_id,
         region=args.region,
+        endpoint_url=args.endpoint_url,
         health_path=args.health_path,
         scheme=args.scheme,
         interval=args.interval,

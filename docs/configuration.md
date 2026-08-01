@@ -24,6 +24,7 @@ All configuration is plain dataclasses from `zonal.config`.
 | `service_id` | — | Cloud Map service id to register into |
 | `port` | — | port the host's server listens on |
 | `region` | `None` | AWS region |
+| `endpoint_url` | `None` | custom Cloud Map endpoint (VPC endpoint, or an emulator) |
 | `az_attribute` | `AZID` | Cloud Map attribute key the AZ-ID is written under |
 | `extra_attributes` | `{}` | additional Cloud Map instance attributes |
 | `ip_attribute` | `AWS_INSTANCE_IPV4` | Cloud Map attribute key the host IP is written under |
@@ -35,6 +36,8 @@ All configuration is plain dataclasses from `zonal.config`.
 |---|---|---|
 | `namespace`, `service` | — | service to monitor |
 | `service_id` | `None` | resolved from `namespace`+`service` if omitted |
+| `region` | `None` | AWS region |
+| `endpoint_url` | `None` | custom Cloud Map endpoint (VPC endpoint, or an emulator) |
 | `health_path` / `scheme` | `/health` / `http` | probe target |
 | `interval` / `timeout` | `10.0` / `2.0` | sweep cadence and per-probe timeout (seconds) |
 | `healthy_threshold` / `unhealthy_threshold` | `2` / `3` | consecutive probes before flipping status |
@@ -43,7 +46,8 @@ All configuration is plain dataclasses from `zonal.config`.
 | `port_attribute` | `AWS_INSTANCE_PORT` | Cloud Map attribute holding the host port |
 | `az_attribute` | `AZID` | attribute parsed onto `Host.az`; the daemon does not route on AZ, so a wrong value here is inert |
 
-All three are also CLI flags: `--ip-attribute`, `--port-attribute`, `--az-attribute`.
+All of these are CLI flags too: `--endpoint-url`, `--ip-attribute`, `--port-attribute`,
+`--az-attribute`.
 
 !!! warning "Keep the attribute keys consistent"
     The `ip_attribute` / `port_attribute` keys describe one schema written by `RegisterConfig` and

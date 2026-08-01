@@ -2,6 +2,7 @@ import boto3
 
 from . import imds
 from .config import RegisterConfig
+from .discovery import _boto_config
 from .log import get_logger
 
 log = get_logger("zonal.register")
@@ -12,7 +13,12 @@ def register_instance(config: RegisterConfig, *, sd_client=None, metadata: dict 
 
     Call this at boot on each target host. Returns the registered instance id.
     """
-    sd = sd_client or boto3.client("servicediscovery", region_name=config.region)
+    sd = sd_client or boto3.client(
+        "servicediscovery",
+        region_name=config.region,
+        endpoint_url=config.endpoint_url,
+        config=_boto_config(config.endpoint_url),
+    )
     md = metadata or imds.metadata()
     attrs = {
         config.ip_attribute: md["ipv4"],
@@ -44,7 +50,19 @@ def register_instance(config: RegisterConfig, *, sd_client=None, metadata: dict 
     return md["instance_id"]
 
 
-def deregister_instance(service_id: str, instance_id: str, *, sd_client=None, region: str | None = None) -> None:
-    sd = sd_client or boto3.client("servicediscovery", region_name=region)
+def deregister_instance(
+    service_id: str,
+    instance_id: str,
+    *,
+    sd_client=None,
+    region: str | None = None,
+    endpoint_url: str | None = None,
+) -> None:
+    sd = sd_client or boto3.client(
+        "servicediscovery",
+        region_name=region,
+        endpoint_url=endpoint_url,
+        config=_boto_config(endpoint_url),
+    )
     sd.deregister_instance(ServiceId=service_id, InstanceId=instance_id)
     log.info("deregistered", service_id=service_id, instance_id=instance_id)

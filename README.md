@@ -294,10 +294,10 @@ pytest -m integration                                # or set MINISTACK_ENDPOINT
 > `data-localhost` and fails, so zonal disables the prefix automatically whenever `endpoint_url` is set.
 >
 > ⚠️ What MiniStack **can't** prove: the actual cross-AZ cost saving — only a real multi-AZ
-> environment bills that. Emulator fidelity also varies, so two integration assertions *skip* rather
-> than fail when the backend doesn't track custom health status, or doesn't filter on
-> `HealthStatus`/AZ the way real Cloud Map does. Affinity itself is applied client-side, so the demo
-> below shows correct same-AZ routing and fallback either way.
+> environment bills that. Emulator fidelity otherwise held up — MiniStack 1.4.9 tracks custom health
+> status and filters `HealthStatus`/AZ well enough that the whole suite passes — but the assertions
+> that depend on that *skip* rather than fail, so a thinner emulator degrades gracefully. Affinity
+> itself is applied client-side, so routing and fallback are correct either way.
 
 ### ▶️ End-to-end demo
 
