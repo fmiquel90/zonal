@@ -5,13 +5,13 @@
 === "Sync only"
 
     ```bash
-    pip install "zonal @ git+ssh://git@github.com/<org>/zonal.git@v0.1.0"
+    pip install "zonal @ git+https://github.com/fmiquel90/zonal.git@main"
     ```
 
 === "With async (aioboto3)"
 
     ```bash
-    pip install "zonal[aio] @ git+ssh://git@github.com/<org>/zonal.git@v0.1.0"
+    pip install "zonal[aio] @ git+https://github.com/fmiquel90/zonal.git@main"
     ```
 
 zonal targets **Python 3.10+** and depends on `boto3`, `requests`, and `structlog`. The async
@@ -19,9 +19,11 @@ balancer additionally needs `aioboto3` (the `[aio]` extra).
 
 ## Prerequisites
 
-zonal routes over an existing **AWS Cloud Map** service. The service must be created (via your infra
-tooling) with `HealthCheckCustomConfig` — Route 53 health checks only work on public IPs, not your
-private hosts. See [required IAM](../operations.md#required-iam).
+zonal routes over an existing **AWS Cloud Map** service, created with `HealthCheckCustomConfig` via
+your infra tooling. The alternative, `HealthCheckConfig` (Route 53 health checks), is only supported
+on public DNS and HTTP namespaces — Route 53's health checkers sit outside your VPC and can't reach
+private hosts — so a private DNS namespace leaves custom health checks as the only option. See
+[required IAM](../operations.md#required-iam).
 
 ## Your first call
 

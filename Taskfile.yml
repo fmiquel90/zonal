@@ -1,0 +1,144 @@
+version: '3'
+
+# Task runner for zonal. `task` alone lists everything.
+# Requires go-task (https://taskfile.dev); `pip install go-task-bin` works too.
+
+vars:
+  ENDPOINT: '{{.MINISTACK_ENDPOINT | default "http://localhost:4566"}}'
+  RUNDIR: .ministack
+
+env:
+  # MiniStack accepts any credentials, but boto3 still needs them present to build a client.
+  AWS_ACCESS_KEY_ID: '{{.AWS_ACCESS_KEY_ID | default "test"}}'
+  AWS_SECRET_ACCESS_KEY: '{{.AWS_SECRET_ACCESS_KEY | default "test"}}'
+  AWS_DEFAULT_REGION: '{{.AWS_DEFAULT_REGION | default "eu-west-1"}}'
+
+tasks:
+  default:
+    desc: List the available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  install:
+    desc: Install zonal editable with the async + dev extras, and the local test stack
+    cmds:
+      - pip install -e ".[aio,dev]"
+      - pip install ministack pyflakes
+
+  lint:
+    desc: Static checks — unused imports, undefined names
+    cmds:
+      - python -m pyflakes src tests examples
+
+  test:
+    desc: Unit tests only — no network, no emulator, no Docker
+    cmds:
+      - python -m pytest -m "not integration" {{.CLI_ARGS}}
+
+  test:e2e:
+    desc: End-to-end tests against a local MiniStack (started automatically if needed)
+    deps: [ministack:up]
+    cmds:
+      - python -m pytest -m integration -rs {{.CLI_ARGS}}
+
+  test:all:
+    desc: Everything — unit and end-to-end
+    deps: [ministack:up]
+    cmds:
+      - python -m pytest -rs {{.CLI_ARGS}}
+
+  demo:
+    desc: Run the narrated end-to-end demo against a local MiniStack
+    deps: [ministack:up]
+    cmds:
+      - python examples/local_demo.py
+
+  check:
+    desc: What CI runs — lint plus the whole suite
+    cmds:
+      - task: lint
+      - task: test:all
+
+  ministack:up:
+    desc: Start MiniStack unless it is already listening
+    # `status` short-circuits the task when it already exits 0, so this is idempotent and
+    # cheap to declare as a dependency of every task that needs the emulator.
+    silent: true
+    status:
+      - curl -sf -o /dev/null {{.ENDPOINT}}
+    cmds:
+      - mkdir -p {{.RUNDIR}}
+      - |
+        # setsid detaches it from the task shell so it survives this process exiting. The pid is
+        # written from inside the child and then exec'd over, so the pidfile holds MiniStack's own
+        # pid — `$!` here would be setsid's, which forks and exits immediately.
+        setsid sh -c 'echo $$ > "$1"/ministack.pid; exec ministack' _ {{.RUNDIR}} \
+          > {{.RUNDIR}}/ministack.log 2>&1 < /dev/null &
+        for _ in $(seq 1 60); do
+          if curl -sf -o /dev/null {{.ENDPOINT}}; then
+            echo "MiniStack listening on {{.ENDPOINT}}"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "MiniStack did not come up; see {{.RUNDIR}}/ministack.log" >&2
+        exit 1
+
+  ministack:down:
+    desc: Stop the MiniStack this Taskfile started
+    silent: true
+    cmds:
+      - |
+        if [ ! -f {{.RUNDIR}}/ministack.pid ]; then
+          echo "no MiniStack pidfile in {{.RUNDIR}} — nothing this Taskfile started"
+          exit 0
+        fi
+        pid="$(cat {{.RUNDIR}}/ministack.pid)"
+        # /bin/kill, not `kill`: go-task's embedded shell has no kill builtin ("unsupported
+        # builtin"), so the plain form silently fails to stop anything.
+        # MiniStack also does not exit on SIGTERM, so ask politely, then insist.
+        /bin/kill "$pid" 2>/dev/null || true
+        for _ in $(seq 1 5); do
+          /bin/kill -0 "$pid" 2>/dev/null || break
+          sleep 1
+        done
+        /bin/kill -9 "$pid" 2>/dev/null || true
+        rm -f {{.RUNDIR}}/ministack.pid
+        for _ in $(seq 1 10); do
+          curl -sf -o /dev/null {{.ENDPOINT}} || { echo "MiniStack stopped"; exit 0; }
+          sleep 1
+        done
+        # don't claim success: something else is serving the endpoint (a second instance, or one
+        # started outside this Taskfile)
+        echo "killed pid $pid, but {{.ENDPOINT}} is still answering" >&2
+        exit 1
+
+  ministack:status:
+    desc: Report whether MiniStack is reachable
+    silent: true
+    cmds:
+      - |
+        if curl -sf -o /dev/null {{.ENDPOINT}}; then
+          echo "up   {{.ENDPOINT}}"
+        else
+          echo "down {{.ENDPOINT}}"
+          exit 1
+        fi
+
+  ministack:logs:
+    desc: Tail the MiniStack log
+    cmds:
+      - tail -f {{.RUNDIR}}/ministack.log
+
+  docs:serve:
+    desc: Serve the documentation site locally
+    cmds:
+      - pip install -e ".[docs]"
+      - mkdocs serve
+
+  docs:build:
+    desc: Build the documentation site (strict, as CI does)
+    cmds:
+      - pip install -e ".[docs]"
+      - mkdocs build --strict

@@ -17,6 +17,16 @@ zonal-healthcheck --namespace services.internal --service backend --region eu-we
     --healthy-threshold 2 --unhealthy-threshold 3 --concurrency 16 --timeout 2
 ```
 
+If your hosts register under non-default Cloud Map attribute keys, the daemon has to be told, or it
+lists instances it cannot parse and sweeps zero hosts. `--endpoint-url` points it at a VPC endpoint
+or a local emulator:
+
+```bash
+zonal-healthcheck --namespace services.internal --service backend \
+    --ip-attribute MY_IPV4 --port-attribute MY_PORT \
+    --endpoint-url http://localhost:4566
+```
+
 ## What a sweep does
 
 1. **Discover** every instance for the service (`HealthStatus=ALL`).
@@ -40,3 +50,9 @@ for failures a caller observes directly. See [calling a service](calling.md#the-
 !!! note "Run it as its own process"
     The CLI configures JSON logging itself (it owns its process). Run one daemon per service, e.g. as
     a systemd unit or a small ECS/Fargate task.
+
+!!! tip "Embedding `HealthChecker` instead of running the CLI"
+    Probes share one thread pool across sweeps. `run()` releases it when `stop()` makes it return,
+    so the daemon path needs nothing extra — but if you drive sweeps yourself with `run_once()`,
+    use the checker as a context manager (or call `close()`), otherwise its worker threads stay
+    alive as long as the object does.

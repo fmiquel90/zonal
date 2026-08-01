@@ -89,7 +89,12 @@ def create_service(sd):
             if op["Status"] == "SUCCESS":
                 ns_id = op["Targets"]["NAMESPACE"]
                 break
+            if op["Status"] == "FAIL":
+                raise RuntimeError(op.get("ErrorMessage", "namespace creation failed"))
             time.sleep(0.2)
+        else:
+            # else create_service would be handed NamespaceId=None and fail opaquely
+            raise TimeoutError("namespace creation timed out")
     svc = sd.create_service(
         Name=svc_name,
         NamespaceId=ns_id,
@@ -101,6 +106,12 @@ def create_service(sd):
 
 def picks(balancer, n=8):
     return Counter(f"{h.az}:{h.port}" for h in (balancer.pick() for _ in range(n)))
+
+
+def in_az(balancer, az):
+    """True when the cache is non-empty and every host in it is in `az`."""
+    hosts = balancer.hosts()
+    return bool(hosts) and all(h.az == az for h in hosts)
 
 
 def wait_until(predicate, timeout=15.0):
@@ -145,7 +156,9 @@ def main():
     ).start()
 
     assert balancer.wait_ready(timeout=15), "balancer never became ready"
-    assert wait_until(lambda: all(h.az == "euw1-az1" for h in balancer.hosts())), "az1 hosts not isolated"
+    # `all()` alone is vacuously true on an empty cache — wait_ready() returns once the first
+    # refresh completes even if it found nothing — so require hosts before checking their AZ.
+    assert wait_until(lambda: in_az(balancer, "euw1-az1")), "az1 hosts not isolated"
 
     print("\n[1] same-AZ affinity — all picks should be euw1-az1:")
     print("   ", picks(balancer))
@@ -159,7 +172,7 @@ def main():
     for s in backends:
         if s.az == "euw1-az1":
             s.healthy = False
-    assert wait_until(lambda: all(h.az == "euw1-az2" for h in balancer.hosts())), "fallback never happened"
+    assert wait_until(lambda: in_az(balancer, "euw1-az2")), "fallback never happened"
     print("    picks after failure:", picks(balancer))
 
     print("\n→ cleanup")

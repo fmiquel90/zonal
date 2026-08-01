@@ -15,6 +15,12 @@ class DiscoveryConfig:
     az_attribute: str = "AZID"
     ip_attribute: str = "AWS_INSTANCE_IPV4"
     port_attribute: str = "AWS_INSTANCE_PORT"
+    # bound every Cloud Map call: botocore's 60s defaults let a black-holed endpoint block a
+    # caller for minutes. max_attempts counts total requests, the first one included.
+    connect_timeout: float = 2.0
+    read_timeout: float = 3.0
+    max_attempts: int = 2
+    imds_timeout: float = 2.0  # per-request bound on the IMDS lookup behind az_id/metadata
 
 
 @dataclass
@@ -28,6 +34,13 @@ class RegisterConfig:
     # attributes the other side reads.
     ip_attribute: str = "AWS_INSTANCE_IPV4"
     port_attribute: str = "AWS_INSTANCE_PORT"
+    endpoint_url: str | None = None  # custom Cloud Map endpoint (VPC endpoint, or an emulator)
+    # bound every Cloud Map call: botocore's 60s defaults let a black-holed endpoint block a
+    # caller for minutes. max_attempts counts total requests, the first one included.
+    connect_timeout: float = 2.0
+    read_timeout: float = 3.0
+    max_attempts: int = 2
+    imds_timeout: float = 2.0  # per-request bound on the IMDS lookup behind az_id/metadata
 
 
 @dataclass
@@ -43,7 +56,15 @@ class HealthConfig:
     healthy_threshold: int = 2
     unhealthy_threshold: int = 3
     concurrency: int = 16
-    # must match DiscoveryConfig's, or the daemon probes nothing it can see
+    # ip/port must match DiscoveryConfig's, or the daemon parses no instance out of the listing and
+    # silently sweeps nothing. az_attribute only labels the parsed host — the daemon does not route
+    # on AZ — but a wrong value here is harmless, not a probe failure.
     az_attribute: str = "AZID"
     ip_attribute: str = "AWS_INSTANCE_IPV4"
     port_attribute: str = "AWS_INSTANCE_PORT"
+    endpoint_url: str | None = None  # custom Cloud Map endpoint (VPC endpoint, or an emulator)
+    # bound every Cloud Map call: botocore's 60s defaults let a black-holed endpoint block a
+    # caller for minutes. max_attempts counts total requests, the first one included.
+    connect_timeout: float = 2.0
+    read_timeout: float = 3.0
+    max_attempts: int = 2

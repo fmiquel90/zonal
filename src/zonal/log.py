@@ -1,4 +1,5 @@
 import os
+import sys
 from contextvars import ContextVar
 
 import structlog
@@ -24,56 +25,38 @@ def _add_static_fields(_, __, event_dict):
     return event_dict
 
 
-# Which tracers are installed is fixed for the process, but Python does not negative-cache a
-# failed import — attempting one per log record re-walks all of sys.path every time. Resolve the
-# modules once; the spans themselves are still read live, per event.
-_tracers_resolved = False
-_dd_tracer = None
-_otel_trace = None
-
-
-def _resolve_tracers() -> None:
-    global _tracers_resolved, _dd_tracer, _otel_trace
-    try:
-        from ddtrace import tracer  # type: ignore
-
-        _dd_tracer = tracer
-    except Exception:
-        pass
-    try:
-        from opentelemetry import trace  # type: ignore
-
-        _otel_trace = trace
-    except Exception:
-        pass
-    _tracers_resolved = True
-
-
 def _add_correlation(_, __, event_dict):
-    # Prefer an active distributed trace; fall back to a request-scoped id.
-    if not _tracers_resolved:
-        _resolve_tracers()
+    """Prefer an active distributed trace; fall back to a request-scoped id.
 
-    if _dd_tracer is not None:
+    Consults only tracers the application has already imported. `import` costs a full sys.path walk
+    on every miss — Python does not negative-cache failed imports — which, once per log record,
+    dominated the cost of emitting the line; a sys.modules lookup is a dict hit. It also stays live:
+    a tracer imported later in the process is picked up on the next record. Every read is guarded,
+    so a shut-down tracer or a version skew degrades to a line without a trace id, never an
+    exception out of the logging path.
+    """
+    ddtrace = sys.modules.get("ddtrace")
+    if ddtrace is not None:
         try:
-            span = _dd_tracer.current_span()
+            span = ddtrace.tracer.current_span()
+            if span is not None:
+                event_dict["dd.trace_id"] = str(span.trace_id)
+                event_dict["dd.span_id"] = str(span.span_id)
+                event_dict.setdefault("trace_id", str(span.trace_id))
+                return event_dict
         except Exception:
-            span = None
-        if span is not None:
-            event_dict["dd.trace_id"] = str(span.trace_id)
-            event_dict["dd.span_id"] = str(span.span_id)
-            event_dict.setdefault("trace_id", str(span.trace_id))
-            return event_dict
+            pass
 
-    if _otel_trace is not None:
+    otel = sys.modules.get("opentelemetry.trace")
+    if otel is not None:
         try:
-            ctx = _otel_trace.get_current_span().get_span_context()
+            ctx = otel.get_current_span().get_span_context()
+            if ctx.is_valid:
+                event_dict["trace_id"] = format(ctx.trace_id, "032x")
+                event_dict["span_id"] = format(ctx.span_id, "016x")
+                return event_dict
         except Exception:
-            ctx = None
-        if ctx is not None and ctx.is_valid:
-            event_dict["trace_id"] = format(ctx.trace_id, "032x")
-            event_dict["span_id"] = format(ctx.span_id, "016x")
-            return event_dict
+            pass
 
     cid = correlation_id.get()
     if cid:

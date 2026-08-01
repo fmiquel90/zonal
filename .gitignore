@@ -20,3 +20,6 @@ site/
 
 # OS
 .DS_Store
+
+# local test stack started by Taskfile
+.ministack/

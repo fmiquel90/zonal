@@ -1,0 +1,74 @@
+name: tests
+
+# Runs the whole suite — unit *and* end-to-end. MiniStack installs from PyPI, so the emulator
+# needs no Docker service container.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: pip install -e ".[aio,dev]" ministack pyflakes
+
+      - name: Lint
+        run: python -m pyflakes src tests examples
+
+      - name: Start MiniStack
+        run: |
+          mkdir -p .ministack
+          setsid ministack > .ministack/ministack.log 2>&1 < /dev/null &
+          for _ in $(seq 1 60); do
+            if curl -sf -o /dev/null http://localhost:4566/; then
+              echo "MiniStack listening"
+              exit 0
+            fi
+            sleep 1
+          done
+          # Fail loudly rather than letting the integration tests skip themselves into a green run
+          echo "::error::MiniStack did not start"
+          cat .ministack/ministack.log
+          exit 1
+
+      - name: Test
+        # -rs lists anything that skipped, so an emulator gap is visible in the log instead of
+        # passing silently.
+        run: python -m pytest -v -rs
+
+      - name: Guard against a silently-skipped end-to-end suite
+        # A skip is a legitimate outcome locally (no emulator), but in CI the emulator is
+        # guaranteed up, so a skipped integration test means the suite stopped covering the thing
+        # it exists to cover.
+        run: |
+          python -m pytest -m integration -q --no-header -rN > result.txt 2>&1 || true
+          cat result.txt
+          if grep -qE '[0-9]+ skipped' result.txt; then
+            echo "::error::integration tests skipped while MiniStack was up"
+            exit 1
+          fi
+          grep -qE '[0-9]+ passed' result.txt || { echo "::error::no integration test ran"; exit 1; }
+
+      - name: MiniStack log
+        if: failure()
+        run: cat .ministack/ministack.log

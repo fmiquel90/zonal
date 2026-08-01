@@ -13,17 +13,20 @@ register_instance(RegisterConfig(service_id="srv-xxxx", port=8080, region="eu-we
 
 1. reads the instance's IP, instance-id, and AZ-ID from IMDS (or accepts an explicit `metadata`
    dict — used in tests and the demo);
-2. writes them to Cloud Map as `AWS_INSTANCE_IPV4`, `AWS_INSTANCE_PORT`, and the AZ attribute
-   (`AZID` by default), plus any `extra_attributes`;
+2. writes them to Cloud Map as `AWS_INSTANCE_IPV4`, `AWS_INSTANCE_PORT` and `AZID` — the defaults of
+   `ip_attribute` / `port_attribute` / `az_attribute` — plus any `extra_attributes`. Override a key
+   here and you must override the matching one on `DiscoveryConfig` and `HealthConfig` too, or
+   callers discover nothing;
 3. pushes an initial `HEALTHY` custom status so the host serves immediately, then lets the
    [health service](health-service.md) own its status from there.
 
 It returns the registered instance id.
 
 !!! warning "Custom health checks required"
-    The Cloud Map service must be created with `HealthCheckCustomConfig`. If it uses Route 53 health
-    checks instead, the initial `HEALTHY` push is skipped (`CustomHealthNotFound` is swallowed) — but
-    Route 53 checks can't reach private hosts, so custom health is the intended setup.
+    The Cloud Map service must be created with `HealthCheckCustomConfig`. If it uses `HealthCheckConfig`
+    (Route 53) instead, the initial `HEALTHY` push is skipped (`CustomHealthNotFound` is swallowed) —
+    and that combination is only reachable on a public DNS or HTTP namespace anyway, since Route 53's
+    health checkers can't reach private hosts. Custom health is the intended setup.
 
 ## Deregistering
 

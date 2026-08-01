@@ -25,14 +25,25 @@
 
 EC2 callers hit other EC2 hosts directly. With no load balancer enforcing locality, a caller in
 `az-A` happily talks to a host in `az-B` — and every gigabyte that crosses the AZ boundary is billed
-(~`$0.01/GB` *each way*). At hundreds of TB/month of east-west traffic, that's **thousands of
-dollars** of pure transfer cost.
+`$0.01/GB` **in each direction**, so `$0.02` per GB actually moved. At 100 TB/month of east-west
+traffic that's **~$2,000/month** of pure transfer cost; at hundreds of TB, several times that.
 
-The usual fix — an internal NLB with cross-zone disabled — keeps traffic in-AZ but **re-introduces a
-per-GB processing fee** that, at that volume, costs nearly as much as the problem it solves.
+Traffic that stays inside one AZ over private IPv4 is **free**. That gap is the whole opportunity.
+
+The usual fix — an internal NLB with cross-zone load balancing disabled — is neither free nor
+automatic. Each NLB node only forwards to targets in *its* AZ, but DNS still hands the client one
+node IP **per** AZ, so a caller can land on a remote node unless you also enable AZ DNS affinity or
+resolve the zonal hostname yourself. And every gigabyte then pays an LCU processing fee
+(~`$0.006/GB` where processed bytes is the dominant LCU dimension) plus an hourly charge per AZ.
+That is *cheaper* than the cross-AZ transfer it replaces — but it's a per-GB tax on 100% of your
+traffic, plus an extra hop.
 
 **`zonal` keeps the traffic peer-to-peer and intra-AZ — which is free** — by making each caller pick a
-healthy host *in its own AZ*, falling back to other AZs only when it must.
+healthy host *in its own AZ*, falling back to other AZs only when it must. No hop, no per-GB fee.
+
+> 💲 Figures are list price, `us-east-1`/`eu-west-1`, checked August 2026. Verify for your region on
+> the [EC2 data transfer](https://aws.amazon.com/ec2/pricing/on-demand/) and
+> [ELB](https://aws.amazon.com/elasticloadbalancing/pricing/) pricing pages.
 
 ## ✨ Features
 
@@ -40,10 +51,12 @@ healthy host *in its own AZ*, falling back to other AZs only when it must.
   falling back to other AZs only when none are healthy. zonal selects; **you own the transport**
   (your HTTP client, your auth, your streaming, your retries).
 - 🧭 **AZ affinity + fallback, client-side authoritative** — the balancer keeps same-AZ hosts when
-  any are healthy, else falls back to all healthy hosts (and emits a `cross_az_fallback` log). It
-  does *not* depend on the backend honoring `DiscoverInstances` `OptionalParameters` (real AWS does,
-  emulators don't), so affinity behaves identically everywhere — and is testable locally. The AZ-ID
-  is still sent as `OptionalParameters` to narrow the payload server-side when supported.
+  any are healthy, else falls back to all healthy hosts (and emits a `cross_az_fallback` log). The
+  AZ-ID *is* still sent as `DiscoverInstances` `OptionalParameters` to narrow the payload
+  server-side — but affinity never depends on it. AWS documents those as **opportunistic** filters
+  that fail open: when no instance matches, the filter is silently dropped and every instance comes
+  back. Emulators may ignore them outright. Re-applying affinity locally makes the behaviour
+  identical everywhere, and testable.
 - 🆔 **AZ-ID, not AZ-name** — AZ names are randomized per account; the AZ-ID (`euw1-az1`) is stable
   and physically consistent. Routing keys on the ID.
 - 🩺 **Two-layer health** — Cloud Map holds the shared, slow-moving status (pushed by the health
@@ -80,10 +93,10 @@ healthy host *in its own AZ*, falling back to other AZs only when it must.
 
 ```bash
 # sync balancer only
-pip install "zonal @ git+ssh://git@github.com/<org>/zonal.git@v0.1.0"
+pip install "zonal @ git+https://github.com/fmiquel90/zonal.git@main"
 
 # with the async balancer (aioboto3)
-pip install "zonal[aio] @ git+ssh://git@github.com/<org>/zonal.git@v0.1.0"
+pip install "zonal[aio] @ git+https://github.com/fmiquel90/zonal.git@main"
 ```
 
 ### 📞 Caller (sync)
@@ -143,8 +156,10 @@ from zonal import RegisterConfig, register_instance
 register_instance(RegisterConfig(service_id="srv-xxxx", port=8080, region="eu-west-1"))
 ```
 
-> The Cloud Map service must be created (Terraform/infra) with `HealthCheckCustomConfig` — Route 53
-> health checks only work on public IPs, not your private hosts.
+> The Cloud Map service must be created (Terraform/infra) with `HealthCheckCustomConfig`. The
+> alternative, `HealthCheckConfig` (Route 53 health checks), is only supported on **public DNS and
+> HTTP namespaces** — Route 53's health checkers live outside your VPC and can't reach private
+> hosts — so it is not an option for a private DNS namespace.
 
 ### 🩺 Health service — one daemon per service
 
@@ -171,7 +186,7 @@ pass `az_id`; `sd_client` injects a preconfigured boto3 client (tests, custom en
 | Member | Description |
 |---|---|
 | `.start()` / `with Balancer(...) as b` | start the background refresh loop |
-| `.wait_ready(timeout=None) -> bool` | block until the first host list is cached |
+| `.wait_ready(timeout=None) -> bool` | block until the first discovery completes (even if it found no hosts); `False` on timeout |
 | `.pick() -> Host` | a healthy same-AZ host (raises `NoHealthyHostError` if the cache is empty) |
 | `.lease()` (context manager) | pick + auto `report_failure` on exception, else `report_success` |
 | `.report_failure(host)` / `.report_success(host)` | feed the local circuit breaker |
@@ -207,8 +222,8 @@ is an `async with` resource owned by the refresh loop. `Host` exposes `ip`, `por
 | `service_id` | — | Cloud Map service id to register into |
 | `port` | — | port the host's server listens on |
 | `region` | `None` | AWS region |
-| `az_attribute` | `AZID` | Cloud Map attribute key the AZ-ID is written under |
 | `extra_attributes` | `{}` | additional Cloud Map instance attributes |
+| `*_attribute` | `AWS_INSTANCE_*` / `AZID` | Cloud Map attribute keys written at registration |
 
 `HealthConfig` (health daemon):
 
@@ -220,6 +235,10 @@ is an `async with` resource owned by the refresh loop. `Host` exposes `ip`, `por
 | `interval` / `timeout` | `10.0` / `2.0` | sweep cadence and per-probe timeout (seconds) |
 | `healthy_threshold` / `unhealthy_threshold` | `2` / `3` | consecutive probes before flipping status |
 | `concurrency` | `16` | parallel probes per sweep |
+| `*_attribute` | `AWS_INSTANCE_*` / `AZID` | Cloud Map attribute keys read when listing instances |
+
+> The `*_attribute` keys are one schema: `RegisterConfig` writes them, `DiscoveryConfig` and
+> `HealthConfig` read them. Override a key in one place and you must override it in all three.
 
 ## 🪵 Logging
 
@@ -227,7 +246,7 @@ zonal logs through `structlog` and **never configures logging on import** — th
 Call `configure_json_logging()` once at startup for JSON on stdout:
 
 ```json
-{"namespace": "services.internal", "target_service": "backend", "az": "euw1-az1", "host_count": 4, "service": "zonal", "env": "prod", "message": "discovery_ready", "level": "info", "timestamp": "2026-06-15T10:00:00Z"}
+{"namespace": "services.internal", "target_service": "backend", "az": "euw1-az1", "host_count": 4, "level": "info", "service": "zonal", "env": "prod", "timestamp": "2026-06-15T10:00:00.123456Z", "message": "discovery_ready"}
 ```
 
 Events: `discovery_ready` · `discovery_changed` · `discovery_refresh_failed` · `cross_az_fallback` ·
@@ -238,16 +257,32 @@ Events: `discovery_ready` · `discovery_changed` · `discovery_refresh_failed` �
 ## 🧪 Local development
 
 ```bash
-git clone git@github.com:<org>/zonal.git && cd zonal
+git clone https://github.com/fmiquel90/zonal.git && cd zonal
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[aio,dev]"
 ```
+
+A [Taskfile](https://taskfile.dev) wraps the usual loops (`pip install go-task-bin` if you don't
+have `task`):
+
+| Task | What it does |
+|---|---|
+| `task install` | editable install with the `aio`/`dev` extras, plus the local test stack |
+| `task test` | unit tests only — no network, no emulator, no Docker |
+| `task test:e2e` | **end-to-end tests**, starting MiniStack automatically if it isn't up |
+| `task test:all` | both |
+| `task check` | what CI runs: lint + the whole suite |
+| `task demo` | the narrated end-to-end demo |
+| `task ministack:up` / `:down` / `:status` / `:logs` | manage the local emulator |
+
+`task --list` shows everything. Point them at another emulator with `MINISTACK_ENDPOINT=...`.
 
 Package layout (`src/zonal/`):
 
 | Module | Responsibility |
 |---|---|
-| `balancer.py` / `aio_balancer.py` | public `Balancer` / `AsyncBalancer` — refresh loop + selection |
+| `balancer.py` / `aio_balancer.py` | public `Balancer` / `AsyncBalancer` — transport + refresh loop |
+| `_base.py` | internal: discovery policy, breaker feedback, daemon retry loop (shared by both) |
 | `discovery.py` | `DiscoverInstances` call shaping, response parsing, client-side AZ selection |
 | `routing.py` | thread-safe host cache + round-robin picker + circuit breaker |
 | `register.py` | host self-registration helpers |
@@ -261,21 +296,30 @@ Package layout (`src/zonal/`):
 pytest                  # integration tests auto-skip if MiniStack is down
 ```
 
-**Integration tests** exercise the real boto3 wiring (register → discover → custom health) against
-[MiniStack](https://ministack.org), an open-source AWS emulator:
+**End-to-end tests** run the whole chain — real HTTP backends, the real health daemon, and a
+running balancer with its refresh loop — against [MiniStack](https://ministack.org), an
+open-source AWS emulator. They cover a host going unhealthy and leaving a live balancer's cache,
+the stale cache surviving a discovery outage, topology churn, and the async client:
 
 ```bash
-docker run -d -p 4566:4566 ministackorg/ministack    # endpoint: http://localhost:4566
+task test:e2e                                        # starts MiniStack for you
+
+# or by hand:
+pip install ministack && ministack &                 # or: docker run -d -p 4566:4566 ministackorg/ministack
 pytest -m integration                                # or set MINISTACK_ENDPOINT
 ```
+
+CI runs both suites on Python 3.10–3.13 and fails if the end-to-end tests skip themselves.
 
 > 🧩 **Why `endpoint_url` matters:** `DiscoverInstances` is a *data-plane* call — botocore injects a
 > `data-` host prefix (`data-servicediscovery.<region>...`). Against an emulator that resolves to
 > `data-localhost` and fails, so zonal disables the prefix automatically whenever `endpoint_url` is set.
 >
-> ⚠️ What MiniStack **can't** prove: the actual cross-AZ cost saving (only a real multi-AZ
-> environment bills that). Note MiniStack ignores `OptionalParameters`, but affinity is applied
-> client-side, so the demo below still shows correct same-AZ routing and fallback.
+> ⚠️ What MiniStack **can't** prove: the actual cross-AZ cost saving — only a real multi-AZ
+> environment bills that. Emulator fidelity otherwise held up — MiniStack 1.4.9 tracks custom health
+> status and filters `HealthStatus`/AZ well enough that the whole suite passes — but the assertions
+> that depend on that *skip* rather than fail, so a thinner emulator degrades gracefully. Affinity
+> itself is applied client-side, so routing and fallback are correct either way.
 
 ### ▶️ End-to-end demo
 
@@ -291,8 +335,9 @@ python examples/local_demo.py
 
 ## ☁️ Operational notes
 
-- **🚨 Check the NAT Gateway first.** If this traffic traverses a NAT Gateway (`$0.045/GB` processed),
-  *that* dominates the bill — far above cross-AZ. Make sure callers reach hosts on private IPs directly.
+- **🚨 Check the NAT Gateway first.** If this traffic traverses a NAT Gateway (`$0.045/GB` processed
+  in `us-east-1`, `$0.048/GB` in `eu-west-1`, plus an hourly charge), *that* dominates the bill —
+  roughly 2–5× cross-AZ. Make sure callers reach hosts on private IPs directly.
 - **🧮 Capacity per AZ.** Same-AZ is only free when each AZ holds healthy capacity. If GPU hosts aren't
   in every AZ, the fallback fires and you pay cross-AZ; weigh idle-GPU cost vs transfer saved.
 - **🔁 Retries.** On large payloads, cap retries — after `report_failure` the next `pick()` routes to
@@ -303,7 +348,7 @@ python examples/local_demo.py
 | Principal | Actions |
 |---|---|
 | Callers | `servicediscovery:DiscoverInstances` |
-| Target hosts | `servicediscovery:RegisterInstance`, `UpdateInstanceCustomHealthStatus` |
+| Target hosts | `servicediscovery:RegisterInstance`, `DeregisterInstance`, `UpdateInstanceCustomHealthStatus` |
 | Health service | `servicediscovery:DiscoverInstances`, `UpdateInstanceCustomHealthStatus`, `ListNamespaces`, `ListServices` |
 
 ## 📄 License

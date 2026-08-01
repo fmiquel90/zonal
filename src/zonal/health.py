@@ -7,9 +7,13 @@ import requests
 
 from ._base import poll_forever
 from .config import HealthConfig
-from .discovery import parse_instances
+from .discovery import client_config, parse_instances
 from .log import configure_json_logging, get_logger
 from .model import Host
+
+# Per-thread connection pools to cache, i.e. how many distinct hosts a probe thread can keep
+# connections open to. Above this, requests' LRU evicts and those hosts reconnect each sweep.
+_PROBE_POOL_HOSTS = 64
 
 
 def resolve_service_id(sd, namespace_name: str, service_name: str) -> str:
@@ -59,20 +63,34 @@ class HealthChecker:
 
     def __init__(self, config: HealthConfig, *, sd_client=None, session: requests.Session | None = None):
         self._cfg = config
-        self._sd = sd_client or boto3.client("servicediscovery", region_name=config.region)
-        self._service_id = config.service_id or resolve_service_id(
-            self._sd, config.namespace, config.service
+        self._sd = sd_client or boto3.client(
+            "servicediscovery",
+            region_name=config.region,
+            endpoint_url=config.endpoint_url,
+            config=client_config(config),
         )
+        # Not resolved here: that would be paginated network I/O in a constructor, so the object
+        # could not be built without live AWS, and a throttle at boot would kill the process
+        # instead of being absorbed by the run() loop that exists for exactly that.
+        self._service_id = config.service_id
         self._session = session
         self._local = threading.local()
-        self._pool = cf.ThreadPoolExecutor(
-            max_workers=config.concurrency, thread_name_prefix="zonal-probe"
-        )
+        self._pool: cf.ThreadPoolExecutor | None = None  # created on first sweep, see _probe_all
         self._stop = threading.Event()
         self._state: dict[str, _InstanceState] = {}
         self._log = get_logger("zonal.health").bind(
-            namespace=config.namespace, target_service=config.service, service_id=self._service_id
+            namespace=config.namespace, target_service=config.service
         )
+        if self._service_id is not None:
+            self._log = self._log.bind(service_id=self._service_id)
+
+    def service_id(self) -> str:
+        """The Cloud Map service id, resolved from namespace+service on first use if not given."""
+        if self._service_id is None:
+            self._service_id = resolve_service_id(self._sd, self._cfg.namespace, self._cfg.service)
+            self._log = self._log.bind(service_id=self._service_id)
+            self._log.info("service_id_resolved")
+        return self._service_id
 
     def _list_instances(self) -> list[Host]:
         resp = self._sd.discover_instances(
@@ -80,18 +98,35 @@ class HealthChecker:
         )
         return parse_instances(resp, self._cfg)
 
+    def _probe_all(self, hosts: list[Host]):
+        """Probe every host concurrently, reusing one pool across sweeps.
+
+        The pool outlives a sweep so its threads (and their sessions) are not rebuilt every
+        interval, and is created lazily so close() can release it and a later sweep still works.
+        """
+        if self._pool is None:
+            self._pool = cf.ThreadPoolExecutor(
+                max_workers=self._cfg.concurrency, thread_name_prefix="zonal-probe"
+            )
+        return self._pool.map(self._probe, hosts)
+
     def _http(self) -> requests.Session:
         """The session this thread probes with.
 
         Probes run concurrently and requests.Session is not guaranteed thread-safe, so the default
-        path gives each pool thread its own — which, unlike a session per call, keeps connections
-        alive across sweeps. An injected session (tests) is used as-is.
+        path gives each pool thread its own, avoiding the per-call Session build that requests.get
+        does. Connections also survive between sweeps, though only for the last `pool_connections`
+        distinct hosts a given thread touched — a fleet much larger than that still reconnects.
+        An injected session (tests) is used as-is.
         """
         if self._session is not None:
             return self._session
         session = getattr(self._local, "session", None)
         if session is None:
             session = self._local.session = requests.Session()
+            adapter = requests.adapters.HTTPAdapter(pool_connections=_PROBE_POOL_HOSTS, pool_maxsize=2)
+            session.mount("http://", adapter)
+            session.mount("https://", adapter)
         return session
 
     def _probe(self, host: Host) -> bool:
@@ -122,7 +157,7 @@ class HealthChecker:
         """Push a status to Cloud Map. False if the instance has since been deregistered."""
         try:
             self._sd.update_instance_custom_health_status(
-                ServiceId=self._service_id, InstanceId=instance_id, Status=status
+                ServiceId=self.service_id(), InstanceId=instance_id, Status=status
             )
         except self._sd.exceptions.InstanceNotFound:
             self._state.pop(instance_id, None)
@@ -131,13 +166,16 @@ class HealthChecker:
         return True
 
     def run_once(self) -> None:
-        hosts = self._list_instances()
+        self.service_id()  # resolve up front so a lookup failure is one clear error, not N
+        # An instance with no InstanceId cannot be pushed a status, and would otherwise be keyed
+        # under None in _state and sent to Cloud Map as InstanceId=None.
+        hosts = [h for h in self._list_instances() if h.instance_id]
         # drop bookkeeping for instances Cloud Map no longer lists, else _state grows unbounded
         # across instance churn (it is only otherwise pruned when a push finds one gone).
         live = {h.instance_id for h in hosts}
         self._state = {k: v for k, v in self._state.items() if k in live}
         total = healthy = 0
-        for host, ok in zip(hosts, self._pool.map(self._probe, hosts)):
+        for host, ok in zip(hosts, self._probe_all(hosts)):
             total += 1
             healthy += ok
             self._evaluate(host.instance_id, ok)
@@ -145,11 +183,30 @@ class HealthChecker:
 
     def run(self) -> None:
         self._log.info("health_service_started", interval=self._cfg.interval)
-        poll_forever(self._stop, self._cfg.interval, self.run_once, self._log, "health_sweep_failed")
+        try:
+            poll_forever(
+                self._stop, self._cfg.interval, self.run_once, self._log, "health_sweep_failed"
+            )
+        finally:
+            self.close()
 
     def stop(self) -> None:
+        """Ask run() to finish its current sweep and return. Safe to call from another thread."""
         self._stop.set()
-        self._pool.shutdown(wait=False)
+
+    def close(self) -> None:
+        """Release the probe pool. run() does this on exit; call it yourself if you only use
+        run_once(), or use the checker as a context manager."""
+        pool, self._pool = self._pool, None
+        if pool is not None:
+            pool.shutdown(wait=False)
+
+    def __enter__(self) -> "HealthChecker":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.stop()
+        self.close()
 
 
 def main(argv=None) -> None:
@@ -160,6 +217,7 @@ def main(argv=None) -> None:
     p.add_argument("--service", required=True)
     p.add_argument("--service-id")
     p.add_argument("--region")
+    p.add_argument("--endpoint-url", help="custom Cloud Map endpoint (VPC endpoint, or an emulator)")
     p.add_argument("--health-path", default="/health")
     p.add_argument("--scheme", default="http")
     p.add_argument("--interval", type=float, default=10.0)
@@ -167,6 +225,15 @@ def main(argv=None) -> None:
     p.add_argument("--healthy-threshold", type=int, default=2)
     p.add_argument("--unhealthy-threshold", type=int, default=3)
     p.add_argument("--concurrency", type=int, default=16)
+    # Must match whatever RegisterConfig wrote and DiscoveryConfig reads, or the daemon lists
+    # instances it cannot parse and silently sweeps nothing.
+    # `aws-` prefixed so they don't read as variants of --timeout, which bounds the /health probe
+    p.add_argument("--aws-connect-timeout", type=float, default=2.0)
+    p.add_argument("--aws-read-timeout", type=float, default=3.0)
+    p.add_argument("--aws-max-attempts", type=int, default=2, help="total Cloud Map requests, retries included")
+    p.add_argument("--az-attribute", default="AZID")
+    p.add_argument("--ip-attribute", default="AWS_INSTANCE_IPV4")
+    p.add_argument("--port-attribute", default="AWS_INSTANCE_PORT")
     # No default: defer to the LOG_DEBUG/LOG_LEVEL env opt-in unless explicitly overridden.
     p.add_argument("--log-level")
     args = p.parse_args(argv)
@@ -176,6 +243,7 @@ def main(argv=None) -> None:
         service=args.service,
         service_id=args.service_id,
         region=args.region,
+        endpoint_url=args.endpoint_url,
         health_path=args.health_path,
         scheme=args.scheme,
         interval=args.interval,
@@ -183,5 +251,12 @@ def main(argv=None) -> None:
         healthy_threshold=args.healthy_threshold,
         unhealthy_threshold=args.unhealthy_threshold,
         concurrency=args.concurrency,
+        az_attribute=args.az_attribute,
+        ip_attribute=args.ip_attribute,
+        port_attribute=args.port_attribute,
+        connect_timeout=args.aws_connect_timeout,
+        read_timeout=args.aws_read_timeout,
+        max_attempts=args.aws_max_attempts,
     )
-    HealthChecker(cfg).run()
+    with HealthChecker(cfg) as checker:
+        checker.run()

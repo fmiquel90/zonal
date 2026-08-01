@@ -3,6 +3,7 @@ from .balancer import Balancer
 from .config import DiscoveryConfig, HealthConfig, RegisterConfig
 from .health import HealthChecker, resolve_service_id
 from .log import configure_json_logging, get_logger
+from .imds import ImdsError
 from .model import ZonalError, Host, NoHealthyHostError
 from .register import deregister_instance, register_instance
 from .routing import Router
@@ -20,6 +21,7 @@ __all__ = [
     "ZonalError",
     "Host",
     "NoHealthyHostError",
+    "ImdsError",
     "register_instance",
     "deregister_instance",
     "Router",
