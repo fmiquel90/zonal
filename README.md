@@ -262,6 +262,21 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e ".[aio,dev]"
 ```
 
+A [Taskfile](https://taskfile.dev) wraps the usual loops (`pip install go-task-bin` if you don't
+have `task`):
+
+| Task | What it does |
+|---|---|
+| `task install` | editable install with the `aio`/`dev` extras, plus the local test stack |
+| `task test` | unit tests only — no network, no emulator, no Docker |
+| `task test:e2e` | **end-to-end tests**, starting MiniStack automatically if it isn't up |
+| `task test:all` | both |
+| `task check` | what CI runs: lint + the whole suite |
+| `task demo` | the narrated end-to-end demo |
+| `task ministack:up` / `:down` / `:status` / `:logs` | manage the local emulator |
+
+`task --list` shows everything. Point them at another emulator with `MINISTACK_ENDPOINT=...`.
+
 Package layout (`src/zonal/`):
 
 | Module | Responsibility |
@@ -281,13 +296,20 @@ Package layout (`src/zonal/`):
 pytest                  # integration tests auto-skip if MiniStack is down
 ```
 
-**Integration tests** exercise the real boto3 wiring (register → discover → custom health) against
-[MiniStack](https://ministack.org), an open-source AWS emulator:
+**End-to-end tests** run the whole chain — real HTTP backends, the real health daemon, and a
+running balancer with its refresh loop — against [MiniStack](https://ministack.org), an
+open-source AWS emulator. They cover a host going unhealthy and leaving a live balancer's cache,
+the stale cache surviving a discovery outage, topology churn, and the async client:
 
 ```bash
-docker run -d -p 4566:4566 ministackorg/ministack    # endpoint: http://localhost:4566
+task test:e2e                                        # starts MiniStack for you
+
+# or by hand:
+pip install ministack && ministack &                 # or: docker run -d -p 4566:4566 ministackorg/ministack
 pytest -m integration                                # or set MINISTACK_ENDPOINT
 ```
+
+CI runs both suites on Python 3.10–3.13 and fails if the end-to-end tests skip themselves.
 
 > 🧩 **Why `endpoint_url` matters:** `DiscoverInstances` is a *data-plane* call — botocore injects a
 > `data-` host prefix (`data-servicediscovery.<region>...`). Against an emulator that resolves to
