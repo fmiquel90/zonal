@@ -1,7 +1,10 @@
 """Internals shared by the sync client, the async client, and the health daemon.
 
-Nothing here is public API. It exists so that discovery policy and the daemon-loop recovery rule
-live in exactly one place instead of being copy-pasted per transport.
+Nothing here is public API. BalancerBase holds the discovery policy both balancers apply, so it is
+written once rather than per transport. poll_forever holds the daemon-loop recovery rule for the
+two threaded loops (Balancer and HealthChecker); AsyncBalancer keeps its own loop, because it has
+to hold an `async with` client open across iterations and stops by cancellation rather than by an
+Event — sharing it would mean parameterising both, for one caller.
 """
 
 import random

@@ -71,24 +71,22 @@ def test_health_checker_flips_status(sd, cloud_map_service, health_endpoint):
         sd_client=sd,
         metadata=_metadata("127.0.0.1", "i-health"),
     )
-    checker = HealthChecker(
-        HealthConfig(
-            namespace=svc["namespace"],
-            service=svc["service"],
-            service_id=svc["service_id"],
-            region=REGION,
-            healthy_threshold=2,
-            unhealthy_threshold=2,
-        ),
-        sd_client=sd,
+    cfg = HealthConfig(
+        namespace=svc["namespace"],
+        service=svc["service"],
+        service_id=svc["service_id"],
+        region=REGION,
+        healthy_threshold=2,
+        unhealthy_threshold=2,
     )
+    # `with` releases the probe pool; without it the checker's worker threads outlive the test
+    with HealthChecker(cfg, sd_client=sd) as checker:
+        checker.run_once()
+        checker.run_once()  # two consecutive HEALTHY probes -> threshold reached
+        if _status_of(sd, svc, "i-health") != "HEALTHY":
+            pytest.skip("MiniStack does not track custom health status")
 
-    checker.run_once()
-    checker.run_once()  # two consecutive HEALTHY probes -> threshold reached
-    if _status_of(sd, svc, "i-health") != "HEALTHY":
-        pytest.skip("MiniStack does not track custom health status")
-
-    _Health.healthy = False
-    checker.run_once()
-    checker.run_once()  # two consecutive failing probes -> flip to UNHEALTHY
-    assert _status_of(sd, svc, "i-health") == "UNHEALTHY"
+        _Health.healthy = False
+        checker.run_once()
+        checker.run_once()  # two consecutive failing probes -> flip to UNHEALTHY
+        assert _status_of(sd, svc, "i-health") == "UNHEALTHY"

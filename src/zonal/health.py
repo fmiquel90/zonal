@@ -11,6 +11,10 @@ from .discovery import parse_instances
 from .log import configure_json_logging, get_logger
 from .model import Host
 
+# Per-thread connection pools to cache, i.e. how many distinct hosts a probe thread can keep
+# connections open to. Above this, requests' LRU evicts and those hosts reconnect each sweep.
+_PROBE_POOL_HOSTS = 64
+
 
 def resolve_service_id(sd, namespace_name: str, service_name: str) -> str:
     # generator + next(): paginate lazily, stopping at the first match
@@ -65,9 +69,7 @@ class HealthChecker:
         )
         self._session = session
         self._local = threading.local()
-        self._pool = cf.ThreadPoolExecutor(
-            max_workers=config.concurrency, thread_name_prefix="zonal-probe"
-        )
+        self._pool: cf.ThreadPoolExecutor | None = None  # created on first sweep, see _probe_all
         self._stop = threading.Event()
         self._state: dict[str, _InstanceState] = {}
         self._log = get_logger("zonal.health").bind(
@@ -80,18 +82,35 @@ class HealthChecker:
         )
         return parse_instances(resp, self._cfg)
 
+    def _probe_all(self, hosts: list[Host]):
+        """Probe every host concurrently, reusing one pool across sweeps.
+
+        The pool outlives a sweep so its threads (and their sessions) are not rebuilt every
+        interval, and is created lazily so close() can release it and a later sweep still works.
+        """
+        if self._pool is None:
+            self._pool = cf.ThreadPoolExecutor(
+                max_workers=self._cfg.concurrency, thread_name_prefix="zonal-probe"
+            )
+        return self._pool.map(self._probe, hosts)
+
     def _http(self) -> requests.Session:
         """The session this thread probes with.
 
         Probes run concurrently and requests.Session is not guaranteed thread-safe, so the default
-        path gives each pool thread its own — which, unlike a session per call, keeps connections
-        alive across sweeps. An injected session (tests) is used as-is.
+        path gives each pool thread its own, avoiding the per-call Session build that requests.get
+        does. Connections also survive between sweeps, though only for the last `pool_connections`
+        distinct hosts a given thread touched — a fleet much larger than that still reconnects.
+        An injected session (tests) is used as-is.
         """
         if self._session is not None:
             return self._session
         session = getattr(self._local, "session", None)
         if session is None:
             session = self._local.session = requests.Session()
+            adapter = requests.adapters.HTTPAdapter(pool_connections=_PROBE_POOL_HOSTS, pool_maxsize=2)
+            session.mount("http://", adapter)
+            session.mount("https://", adapter)
         return session
 
     def _probe(self, host: Host) -> bool:
@@ -131,13 +150,15 @@ class HealthChecker:
         return True
 
     def run_once(self) -> None:
-        hosts = self._list_instances()
+        # An instance with no InstanceId cannot be pushed a status, and would otherwise be keyed
+        # under None in _state and sent to Cloud Map as InstanceId=None.
+        hosts = [h for h in self._list_instances() if h.instance_id]
         # drop bookkeeping for instances Cloud Map no longer lists, else _state grows unbounded
         # across instance churn (it is only otherwise pruned when a push finds one gone).
         live = {h.instance_id for h in hosts}
         self._state = {k: v for k, v in self._state.items() if k in live}
         total = healthy = 0
-        for host, ok in zip(hosts, self._pool.map(self._probe, hosts)):
+        for host, ok in zip(hosts, self._probe_all(hosts)):
             total += 1
             healthy += ok
             self._evaluate(host.instance_id, ok)
@@ -145,11 +166,30 @@ class HealthChecker:
 
     def run(self) -> None:
         self._log.info("health_service_started", interval=self._cfg.interval)
-        poll_forever(self._stop, self._cfg.interval, self.run_once, self._log, "health_sweep_failed")
+        try:
+            poll_forever(
+                self._stop, self._cfg.interval, self.run_once, self._log, "health_sweep_failed"
+            )
+        finally:
+            self.close()
 
     def stop(self) -> None:
+        """Ask run() to finish its current sweep and return. Safe to call from another thread."""
         self._stop.set()
-        self._pool.shutdown(wait=False)
+
+    def close(self) -> None:
+        """Release the probe pool. run() does this on exit; call it yourself if you only use
+        run_once(), or use the checker as a context manager."""
+        pool, self._pool = self._pool, None
+        if pool is not None:
+            pool.shutdown(wait=False)
+
+    def __enter__(self) -> "HealthChecker":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.stop()
+        self.close()
 
 
 def main(argv=None) -> None:
@@ -167,6 +207,11 @@ def main(argv=None) -> None:
     p.add_argument("--healthy-threshold", type=int, default=2)
     p.add_argument("--unhealthy-threshold", type=int, default=3)
     p.add_argument("--concurrency", type=int, default=16)
+    # Must match whatever RegisterConfig wrote and DiscoveryConfig reads, or the daemon lists
+    # instances it cannot parse and silently sweeps nothing.
+    p.add_argument("--az-attribute", default="AZID")
+    p.add_argument("--ip-attribute", default="AWS_INSTANCE_IPV4")
+    p.add_argument("--port-attribute", default="AWS_INSTANCE_PORT")
     # No default: defer to the LOG_DEBUG/LOG_LEVEL env opt-in unless explicitly overridden.
     p.add_argument("--log-level")
     args = p.parse_args(argv)
@@ -183,5 +228,9 @@ def main(argv=None) -> None:
         healthy_threshold=args.healthy_threshold,
         unhealthy_threshold=args.unhealthy_threshold,
         concurrency=args.concurrency,
+        az_attribute=args.az_attribute,
+        ip_attribute=args.ip_attribute,
+        port_attribute=args.port_attribute,
     )
-    HealthChecker(cfg).run()
+    with HealthChecker(cfg) as checker:
+        checker.run()

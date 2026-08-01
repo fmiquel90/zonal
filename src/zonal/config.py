@@ -43,7 +43,9 @@ class HealthConfig:
     healthy_threshold: int = 2
     unhealthy_threshold: int = 3
     concurrency: int = 16
-    # must match DiscoveryConfig's, or the daemon probes nothing it can see
+    # ip/port must match DiscoveryConfig's, or the daemon parses no instance out of the listing and
+    # silently sweeps nothing. az_attribute only labels the parsed host — the daemon does not route
+    # on AZ — but a wrong value here is harmless, not a probe failure.
     az_attribute: str = "AZID"
     ip_attribute: str = "AWS_INSTANCE_IPV4"
     port_attribute: str = "AWS_INSTANCE_PORT"

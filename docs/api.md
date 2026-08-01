@@ -41,7 +41,11 @@ A frozen dataclass: `ip`, `port`, `az`, `instance_id`, plus `host.url(path="", *
 
 ## Health
 
-- `HealthChecker(config, *, sd_client=None, session=None)` — `.run()`, `.run_once()`, `.stop()`.
+- `HealthChecker(config, *, sd_client=None, session=None)` — `.run()`, `.run_once()`, `.stop()`,
+  `.close()`. `stop()` asks `run()` to finish its current sweep and return (safe from another
+  thread); `run()` then releases the probe pool for you. If you drive sweeps yourself with
+  `run_once()`, call `.close()` or use the checker as a context manager, or its worker threads live
+  as long as the object does.
 - `resolve_service_id(sd, namespace_name, service_name) -> str`
 
 ## Logging
@@ -62,5 +66,6 @@ does **not** catch them.
 
 - `Router(breaker_cooldown=10.0, clock=time.monotonic)` — the host cache, round-robin picker and
   circuit breaker each balancer wraps. Exported for direct use and testing.
-- `imds` — `get_az_id()` (cached for the process; the AZ-ID is immutable per instance) and
-  `metadata()`, both over IMDSv2.
+- `imds` — `get_az_id()` and `metadata()`, over IMDSv2. Both are cached for the process (the values
+  are immutable for the instance's lifetime, and caching both keeps them from disagreeing); the
+  dict `metadata()` returns is shared, so treat it as read-only.

@@ -27,7 +27,12 @@ class AsyncBalancer(BalancerBase):
         return self
 
     async def wait_ready(self, timeout: float | None = None) -> bool:
-        # wait_for(aw, None) blocks until completion, so the untimed case needs no special casing
+        # Not folded into wait_for(aw, None): since 3.12 that routes through asyncio.timeout(),
+        # which raises RuntimeError when awaited outside a Task. A bare await has no such
+        # requirement, and the untimed case never needs a timer anyway.
+        if timeout is None:
+            await self._ready.wait()
+            return True
         try:
             await asyncio.wait_for(self._ready.wait(), timeout)
             return True

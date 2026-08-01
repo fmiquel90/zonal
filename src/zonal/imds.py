@@ -31,7 +31,10 @@ def get_az_id() -> str:
     return _get("placement/availability-zone-id", _token())
 
 
+@lru_cache(maxsize=1)
 def metadata() -> dict[str, str]:
+    # Cached for the same reason as get_az_id, and so the two never disagree about az_id.
+    # The returned dict is shared between callers — treat it as read-only.
     token = _token()
     return {
         "az_id": _get("placement/availability-zone-id", token),
