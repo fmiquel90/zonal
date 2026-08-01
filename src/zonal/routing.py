@@ -23,8 +23,9 @@ class Router:
     def update(self, hosts: Iterable[Host]) -> None:
         with self._lock:
             self._hosts = tuple(hosts)
-            live = set(self._hosts)
-            self._dead = {h: t for h, t in self._dead.items() if h in live}
+            if self._dead:  # steady state is an empty breaker; skip hashing every host for nothing
+                live = set(self._hosts)
+                self._dead = {h: t for h, t in self._dead.items() if h in live}
 
     def snapshot(self) -> tuple[Host, ...]:
         with self._lock:
@@ -45,13 +46,12 @@ class Router:
                 raise NoHealthyHostError("discovery cache is empty")
             now = self._clock()
             n = len(hosts)
-            for _ in range(n):
+            # One extra lap past the full cycle: if every host is in cooldown the loop falls
+            # through holding the one it started on, handing back a possibly-degraded host rather
+            # than failing hard — that beats refusing all traffic.
+            for _ in range(n + 1):
                 host = hosts[self._idx % n]
                 self._idx += 1
                 if self._dead.get(host, 0.0) <= now:
-                    return host
-            # every host is in cooldown: hand one back anyway rather than failing hard —
-            # a possibly-degraded host beats refusing all traffic.
-            host = hosts[self._idx % n]
-            self._idx += 1
+                    break
             return host

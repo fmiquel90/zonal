@@ -1,4 +1,5 @@
 import os
+import time
 import uuid
 
 import boto3
@@ -57,6 +58,7 @@ def _await_namespace(sd, resp):
             return op["Targets"]["NAMESPACE"]
         if op["Status"] == "FAIL":
             raise RuntimeError(op.get("ErrorMessage", "namespace creation failed"))
+        time.sleep(0.2)  # else the 50 attempts burn through in milliseconds and never wait
     raise TimeoutError("namespace creation timed out")
 
 

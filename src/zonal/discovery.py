@@ -1,6 +1,6 @@
 from botocore.config import Config
 
-from .config import DiscoveryConfig
+from .config import DiscoveryConfig, HealthConfig
 from .model import Host
 
 
@@ -13,7 +13,8 @@ def _boto_config(endpoint_url: str | None) -> Config | None:
     return None
 
 
-def parse_instances(response: dict, cfg: DiscoveryConfig) -> list[Host]:
+def parse_instances(response: dict, cfg: DiscoveryConfig | HealthConfig) -> list[Host]:
+    """Map a DiscoverInstances response onto Hosts, skipping instances missing an ip or port."""
     hosts: list[Host] = []
     for inst in response.get("Instances", []):
         attrs = inst.get("Attributes", {})
