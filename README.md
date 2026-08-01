@@ -80,10 +80,10 @@ healthy host *in its own AZ*, falling back to other AZs only when it must.
 
 ```bash
 # sync balancer only
-pip install "zonal @ git+ssh://git@github.com/<org>/zonal.git@v0.1.0"
+pip install "zonal @ git+https://github.com/fmiquel90/zonal.git@main"
 
 # with the async balancer (aioboto3)
-pip install "zonal[aio] @ git+ssh://git@github.com/<org>/zonal.git@v0.1.0"
+pip install "zonal[aio] @ git+https://github.com/fmiquel90/zonal.git@main"
 ```
 
 ### 📞 Caller (sync)
@@ -171,7 +171,7 @@ pass `az_id`; `sd_client` injects a preconfigured boto3 client (tests, custom en
 | Member | Description |
 |---|---|
 | `.start()` / `with Balancer(...) as b` | start the background refresh loop |
-| `.wait_ready(timeout=None) -> bool` | block until the first host list is cached |
+| `.wait_ready(timeout=None) -> bool` | block until the first discovery completes (even if it found no hosts); `False` on timeout |
 | `.pick() -> Host` | a healthy same-AZ host (raises `NoHealthyHostError` if the cache is empty) |
 | `.lease()` (context manager) | pick + auto `report_failure` on exception, else `report_success` |
 | `.report_failure(host)` / `.report_success(host)` | feed the local circuit breaker |
@@ -207,8 +207,8 @@ is an `async with` resource owned by the refresh loop. `Host` exposes `ip`, `por
 | `service_id` | — | Cloud Map service id to register into |
 | `port` | — | port the host's server listens on |
 | `region` | `None` | AWS region |
-| `az_attribute` | `AZID` | Cloud Map attribute key the AZ-ID is written under |
 | `extra_attributes` | `{}` | additional Cloud Map instance attributes |
+| `*_attribute` | `AWS_INSTANCE_*` / `AZID` | Cloud Map attribute keys written at registration |
 
 `HealthConfig` (health daemon):
 
@@ -220,6 +220,10 @@ is an `async with` resource owned by the refresh loop. `Host` exposes `ip`, `por
 | `interval` / `timeout` | `10.0` / `2.0` | sweep cadence and per-probe timeout (seconds) |
 | `healthy_threshold` / `unhealthy_threshold` | `2` / `3` | consecutive probes before flipping status |
 | `concurrency` | `16` | parallel probes per sweep |
+| `*_attribute` | `AWS_INSTANCE_*` / `AZID` | Cloud Map attribute keys read when listing instances |
+
+> The `*_attribute` keys are one schema: `RegisterConfig` writes them, `DiscoveryConfig` and
+> `HealthConfig` read them. Override a key in one place and you must override it in all three.
 
 ## 🪵 Logging
 
@@ -227,7 +231,7 @@ zonal logs through `structlog` and **never configures logging on import** — th
 Call `configure_json_logging()` once at startup for JSON on stdout:
 
 ```json
-{"namespace": "services.internal", "target_service": "backend", "az": "euw1-az1", "host_count": 4, "service": "zonal", "env": "prod", "message": "discovery_ready", "level": "info", "timestamp": "2026-06-15T10:00:00Z"}
+{"namespace": "services.internal", "target_service": "backend", "az": "euw1-az1", "host_count": 4, "level": "info", "service": "zonal", "env": "prod", "timestamp": "2026-06-15T10:00:00.123456Z", "message": "discovery_ready"}
 ```
 
 Events: `discovery_ready` · `discovery_changed` · `discovery_refresh_failed` · `cross_az_fallback` ·
@@ -238,7 +242,7 @@ Events: `discovery_ready` · `discovery_changed` · `discovery_refresh_failed` �
 ## 🧪 Local development
 
 ```bash
-git clone git@github.com:<org>/zonal.git && cd zonal
+git clone https://github.com/fmiquel90/zonal.git && cd zonal
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[aio,dev]"
 ```
@@ -247,7 +251,8 @@ Package layout (`src/zonal/`):
 
 | Module | Responsibility |
 |---|---|
-| `balancer.py` / `aio_balancer.py` | public `Balancer` / `AsyncBalancer` — refresh loop + selection |
+| `balancer.py` / `aio_balancer.py` | public `Balancer` / `AsyncBalancer` — transport + refresh loop |
+| `_base.py` | internal: discovery policy, breaker feedback, daemon retry loop (shared by both) |
 | `discovery.py` | `DiscoverInstances` call shaping, response parsing, client-side AZ selection |
 | `routing.py` | thread-safe host cache + round-robin picker + circuit breaker |
 | `register.py` | host self-registration helpers |
@@ -303,7 +308,7 @@ python examples/local_demo.py
 | Principal | Actions |
 |---|---|
 | Callers | `servicediscovery:DiscoverInstances` |
-| Target hosts | `servicediscovery:RegisterInstance`, `UpdateInstanceCustomHealthStatus` |
+| Target hosts | `servicediscovery:RegisterInstance`, `DeregisterInstance`, `UpdateInstanceCustomHealthStatus` |
 | Health service | `servicediscovery:DiscoverInstances`, `UpdateInstanceCustomHealthStatus`, `ListNamespaces`, `ListServices` |
 
 ## 📄 License

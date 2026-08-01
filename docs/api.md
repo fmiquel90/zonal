@@ -8,7 +8,7 @@ pass `az_id`; `sd_client` injects a preconfigured boto3 client (tests, custom en
 | Member | Description |
 |---|---|
 | `.start()` / `with Balancer(...) as b` | start the background refresh loop |
-| `.wait_ready(timeout=None) -> bool` | block until the first discovery completes |
+| `.wait_ready(timeout=None) -> bool` | block until the first discovery completes (even if it found no hosts); `False` on timeout |
 | `.pick() -> Host` | a healthy same-AZ host (raises `NoHealthyHostError` if the cache is empty) |
 | `.lease()` (context manager) | pick + auto `report_failure` on exception, else `report_success` |
 | `.report_failure(host)` / `.report_success(host)` | feed the local circuit breaker |
@@ -53,3 +53,14 @@ A frozen dataclass: `ip`, `port`, `az`, `instance_id`, plus `host.url(path="", *
 
 - `ZonalError` — base class.
 - `NoHealthyHostError` — raised by `pick()` when the cache is empty.
+
+Only these two are zonal's own. Everything else surfaces as-is from the underlying library —
+`botocore` exceptions from the AWS calls, `urllib.error.URLError` from IMDS — so `except ZonalError`
+does **not** catch them.
+
+## Also exported
+
+- `Router(breaker_cooldown=10.0, clock=time.monotonic)` — the host cache, round-robin picker and
+  circuit breaker each balancer wraps. Exported for direct use and testing.
+- `imds` — `get_az_id()` (cached for the process; the AZ-ID is immutable per instance) and
+  `metadata()`, both over IMDSv2.

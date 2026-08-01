@@ -5,13 +5,13 @@
 === "Sync only"
 
     ```bash
-    pip install "zonal @ git+ssh://git@github.com/<org>/zonal.git@v0.1.0"
+    pip install "zonal @ git+https://github.com/fmiquel90/zonal.git@main"
     ```
 
 === "With async (aioboto3)"
 
     ```bash
-    pip install "zonal[aio] @ git+ssh://git@github.com/<org>/zonal.git@v0.1.0"
+    pip install "zonal[aio] @ git+https://github.com/fmiquel90/zonal.git@main"
     ```
 
 zonal targets **Python 3.10+** and depends on `boto3`, `requests`, and `structlog`. The async

@@ -43,7 +43,9 @@ except (requests.Timeout, requests.ConnectionError):
 ## Async caller
 
 `AsyncBalancer` mirrors the sync API; `start` / `wait_ready` / `lease` are async, while `pick`,
-`report_*`, and `hosts` stay synchronous (they are cheap and lock-free under asyncio).
+`report_*`, and `hosts` stay synchronous. They read an in-memory cache behind a `threading.Lock`
+that is uncontended under asyncio (a single thread) and cheap under threads, so there is nothing to
+await.
 
 ```python
 import httpx

@@ -13,8 +13,10 @@ register_instance(RegisterConfig(service_id="srv-xxxx", port=8080, region="eu-we
 
 1. reads the instance's IP, instance-id, and AZ-ID from IMDS (or accepts an explicit `metadata`
    dict — used in tests and the demo);
-2. writes them to Cloud Map as `AWS_INSTANCE_IPV4`, `AWS_INSTANCE_PORT`, and the AZ attribute
-   (`AZID` by default), plus any `extra_attributes`;
+2. writes them to Cloud Map as `AWS_INSTANCE_IPV4`, `AWS_INSTANCE_PORT` and `AZID` — the defaults of
+   `ip_attribute` / `port_attribute` / `az_attribute` — plus any `extra_attributes`. Override a key
+   here and you must override the matching one on `DiscoveryConfig` and `HealthConfig` too, or
+   callers discover nothing;
 3. pushes an initial `HEALTHY` custom status so the host serves immediately, then lets the
    [health service](health-service.md) own its status from there.
 

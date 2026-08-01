@@ -13,7 +13,7 @@ configure_json_logging()          # or configure_json_logging(level="DEBUG")
 A balancer event then looks like:
 
 ```json
-{"namespace": "services.internal", "target_service": "backend", "az": "euw1-az1", "host_count": 4, "service": "zonal", "env": "prod", "message": "discovery_ready", "level": "info", "timestamp": "2026-06-15T10:00:00Z"}
+{"namespace": "services.internal", "target_service": "backend", "az": "euw1-az1", "host_count": 4, "level": "info", "service": "zonal", "env": "prod", "timestamp": "2026-06-15T10:00:00.123456Z", "message": "discovery_ready"}
 ```
 
 Every line carries the Observability RFC v1 required fields: `timestamp`, `level`, `service`, `env`,

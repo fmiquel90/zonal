@@ -16,7 +16,7 @@
 | Principal | Actions |
 |---|---|
 | Callers | `servicediscovery:DiscoverInstances` |
-| Target hosts | `servicediscovery:RegisterInstance`, `servicediscovery:UpdateInstanceCustomHealthStatus` |
+| Target hosts | `servicediscovery:RegisterInstance`, `servicediscovery:DeregisterInstance`, `servicediscovery:UpdateInstanceCustomHealthStatus` |
 | Health service | `servicediscovery:DiscoverInstances`, `servicediscovery:UpdateInstanceCustomHealthStatus`, `servicediscovery:ListNamespaces`, `servicediscovery:ListServices` |
 
 ## Resilience characteristics
