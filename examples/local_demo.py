@@ -12,6 +12,7 @@ Run:
 import threading
 import time
 import uuid
+from collections import Counter
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import boto3
@@ -32,28 +33,32 @@ ENDPOINT = "http://localhost:4566"
 REGION = "eu-west-1"
 
 
+class _Handler(BaseHTTPRequestHandler):
+    """Defined once at module scope and handed its backend via `self.server`, rather than being
+    rebuilt per backend as a closure that would pin the whole enclosing scope for the server's life."""
+
+    def do_GET(self):  # /health
+        self.send_response(200 if self.server.backend.healthy else 503)
+        self.end_headers()
+
+    def do_POST(self):  # /work
+        backend = self.server.backend
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(f"served by {backend.az}:{backend.port}".encode())
+
+    def log_message(self, *_):
+        pass
+
+
 class FakeBackend:
     """A local HTTP server standing in for a backend host. `healthy` toggles /health."""
 
     def __init__(self, az: str):
         self.az = az
         self.healthy = True
-        demo = self
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self):  # /health
-                self.send_response(200 if demo.healthy else 503)
-                self.end_headers()
-
-            def do_POST(self):  # /work
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(f"served by {demo.az}:{demo.port}".encode())
-
-            def log_message(self, *_):
-                pass
-
-        self._server = HTTPServer(("127.0.0.1", 0), Handler)
+        self._server = HTTPServer(("127.0.0.1", 0), _Handler)
+        self._server.backend = self
         self.port = self._server.server_address[1]
         threading.Thread(target=self._server.serve_forever, daemon=True).start()
 
@@ -95,11 +100,7 @@ def create_service(sd):
 
 
 def picks(balancer, n=8):
-    counts: dict[str, int] = {}
-    for _ in range(n):
-        h = balancer.pick()
-        counts[f"{h.az}:{h.port}"] = counts.get(f"{h.az}:{h.port}", 0) + 1
-    return counts
+    return Counter(f"{h.az}:{h.port}" for h in (balancer.pick() for _ in range(n)))
 
 
 def wait_until(predicate, timeout=15.0):
@@ -117,19 +118,15 @@ def main():
     print("→ creating Cloud Map namespace + service")
     namespace, service, service_id = create_service(sd)
 
-    # two hosts in az1, one in az2
-    hosts = {
-        "euw1-az1": [FakeBackend("euw1-az1"), FakeBackend("euw1-az1")],
-        "euw1-az2": [FakeBackend("euw1-az2")],
-    }
-    for az, servers in hosts.items():
-        for s in servers:
-            register_instance(
-                RegisterConfig(service_id=service_id, port=s.port, region=REGION),
-                sd_client=sd,
-                metadata={"ipv4": "127.0.0.1", "instance_id": f"i-{az}-{s.port}", "az_id": az,
-                          "az_name": az, "region": REGION},
-            )
+    # two hosts in az1, one in az2 — each backend already knows its own AZ
+    backends = [FakeBackend("euw1-az1"), FakeBackend("euw1-az1"), FakeBackend("euw1-az2")]
+    for s in backends:
+        register_instance(
+            RegisterConfig(service_id=service_id, port=s.port, region=REGION),
+            sd_client=sd,
+            metadata={"ipv4": "127.0.0.1", "instance_id": f"i-{s.az}-{s.port}", "az_id": s.az,
+                      "az_name": s.az, "region": REGION},
+        )
 
     print("→ starting health-check daemon")
     checker = HealthChecker(
@@ -159,17 +156,17 @@ def main():
     print("    response:", body)
 
     print("\n[3] killing both euw1-az1 hosts -> expect fallback to euw1-az2 (watch cross_az_fallback log)")
-    for s in hosts["euw1-az1"]:
-        s.healthy = False
+    for s in backends:
+        if s.az == "euw1-az1":
+            s.healthy = False
     assert wait_until(lambda: all(h.az == "euw1-az2" for h in balancer.hosts())), "fallback never happened"
     print("    picks after failure:", picks(balancer))
 
     print("\n→ cleanup")
     balancer.close()
     checker.stop()
-    for servers in hosts.values():
-        for s in servers:
-            s.stop()
+    for s in backends:
+        s.stop()
     for inst in sd.discover_instances(NamespaceName=namespace, ServiceName=service, HealthStatus="ALL").get("Instances", []):
         sd.deregister_instance(ServiceId=service_id, InstanceId=inst["InstanceId"])
     print("done.")

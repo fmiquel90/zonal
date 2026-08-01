@@ -1,4 +1,5 @@
 import urllib.request
+from functools import lru_cache
 
 _BASE = "http://169.254.169.254/latest"
 
@@ -20,9 +21,13 @@ def _get(path: str, token: str) -> str:
     return urllib.request.urlopen(req, timeout=2).read().decode()
 
 
+@lru_cache(maxsize=1)
 def get_az_id() -> str:
     # AZ-ID (euw1-az1), not AZ-name: the name is randomized per account, the ID is stable
     # and physically consistent, which is what intra-AZ routing must key on.
+    # Immutable for the instance's lifetime, so cache it: an app with one balancer per downstream
+    # service would otherwise pay two blocking IMDS round trips per balancer at startup.
+    # lru_cache does not cache exceptions, so a failed lookup is still retried.
     return _get("placement/availability-zone-id", _token())
 
 

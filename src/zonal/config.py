@@ -24,6 +24,10 @@ class RegisterConfig:
     region: str | None = None
     az_attribute: str = "AZID"
     extra_attributes: dict[str, str] = field(default_factory=dict)
+    # must match DiscoveryConfig's, or the balancer discovers nothing: one side writes the
+    # attributes the other side reads.
+    ip_attribute: str = "AWS_INSTANCE_IPV4"
+    port_attribute: str = "AWS_INSTANCE_PORT"
 
 
 @dataclass
@@ -39,3 +43,7 @@ class HealthConfig:
     healthy_threshold: int = 2
     unhealthy_threshold: int = 3
     concurrency: int = 16
+    # must match DiscoveryConfig's, or the daemon probes nothing it can see
+    az_attribute: str = "AZID"
+    ip_attribute: str = "AWS_INSTANCE_IPV4"
+    port_attribute: str = "AWS_INSTANCE_PORT"

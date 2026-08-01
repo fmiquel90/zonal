@@ -1,5 +1,4 @@
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest

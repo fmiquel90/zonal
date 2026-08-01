@@ -30,8 +30,7 @@ def _balancer(instances):
 
 
 def test_pick_raises_when_empty():
-    bal = Balancer(DiscoveryConfig(namespace="n", service="s"), sd_client=FakeSD([]), az_id="euw1-az1")
-    bal._refresh_once()
+    bal = _balancer([])
     with pytest.raises(NoHealthyHostError):
         bal.pick()
 

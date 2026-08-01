@@ -15,8 +15,8 @@ def register_instance(config: RegisterConfig, *, sd_client=None, metadata: dict 
     sd = sd_client or boto3.client("servicediscovery", region_name=config.region)
     md = metadata or imds.metadata()
     attrs = {
-        "AWS_INSTANCE_IPV4": md["ipv4"],
-        "AWS_INSTANCE_PORT": str(config.port),
+        config.ip_attribute: md["ipv4"],
+        config.port_attribute: str(config.port),
         config.az_attribute: md["az_id"],
         **config.extra_attributes,
     }
