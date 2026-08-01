@@ -11,6 +11,7 @@ All configuration is plain dataclasses from `zonal.config`.
 | `endpoint_url` | `None` | custom Cloud Map endpoint (VPC endpoint, or MiniStack in tests) |
 | `connect_timeout` / `read_timeout` | `2.0` / `3.0` | per-request bounds on every Cloud Map call (seconds) |
 | `max_attempts` | `2` | total Cloud Map requests per call, the first one included |
+| `imds_timeout` | `2.0` | bound on the IMDS lookup behind an auto-detected AZ-ID (seconds) |
 | `refresh_interval` / `refresh_jitter` | `5.0` / `1.0` | background discovery cadence (seconds) |
 | `breaker_cooldown` | `10.0` | local eject duration after `report_failure` (seconds) |
 | `prefer_same_az` | `True` | toggle AZ affinity |
@@ -29,6 +30,7 @@ All configuration is plain dataclasses from `zonal.config`.
 | `endpoint_url` | `None` | custom Cloud Map endpoint (VPC endpoint, or an emulator) |
 | `connect_timeout` / `read_timeout` | `2.0` / `3.0` | per-request bounds on every Cloud Map call (seconds) |
 | `max_attempts` | `2` | total Cloud Map requests per call, the first one included |
+| `imds_timeout` | `2.0` | bound on the IMDS lookup behind an auto-detected AZ-ID (seconds) |
 | `az_attribute` | `AZID` | Cloud Map attribute key the AZ-ID is written under |
 | `extra_attributes` | `{}` | additional Cloud Map instance attributes |
 | `ip_attribute` | `AWS_INSTANCE_IPV4` | Cloud Map attribute key the host IP is written under |

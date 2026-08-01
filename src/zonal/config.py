@@ -20,6 +20,7 @@ class DiscoveryConfig:
     connect_timeout: float = 2.0
     read_timeout: float = 3.0
     max_attempts: int = 2
+    imds_timeout: float = 2.0  # per-request bound on the IMDS lookup behind az_id/metadata
 
 
 @dataclass
@@ -39,6 +40,7 @@ class RegisterConfig:
     connect_timeout: float = 2.0
     read_timeout: float = 3.0
     max_attempts: int = 2
+    imds_timeout: float = 2.0  # per-request bound on the IMDS lookup behind az_id/metadata
 
 
 @dataclass

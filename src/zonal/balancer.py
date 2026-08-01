@@ -21,6 +21,8 @@ class Balancer(BalancerBase):
 
     def __init__(self, config: DiscoveryConfig, *, sd_client=None, az_id: str | None = None):
         super().__init__(config, az_id, "zonal.balancer")
+        if self._az_id is None:
+            self._resolve_az_id()  # sync client, sync constructor: nothing to stall but the caller
         self._sd = sd_client or boto3.client(
             "servicediscovery",
             region_name=config.region,
@@ -64,8 +66,19 @@ class Balancer(BalancerBase):
         else:
             self.report_success(host)
 
-    def close(self) -> None:
+    def close(self, timeout: float | None = None) -> bool:
+        """Stop the refresh loop. Returns True once it has actually stopped.
+
+        Returns immediately by default — the thread is a daemon, so it never holds up process
+        exit. Pass a timeout to wait for it: the interval sleep is interruptible, but a discovery
+        call already in flight still has to finish or time out first (bounded by the config's
+        connect/read timeouts), so budget at least that.
+        """
         self._stop.set()
+        if timeout is None:
+            return not self._thread.is_alive()
+        self._thread.join(timeout)
+        return not self._thread.is_alive()
 
     def __enter__(self) -> "Balancer":
         return self.start()

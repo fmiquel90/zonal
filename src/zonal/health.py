@@ -69,17 +69,28 @@ class HealthChecker:
             endpoint_url=config.endpoint_url,
             config=client_config(config),
         )
-        self._service_id = config.service_id or resolve_service_id(
-            self._sd, config.namespace, config.service
-        )
+        # Not resolved here: that would be paginated network I/O in a constructor, so the object
+        # could not be built without live AWS, and a throttle at boot would kill the process
+        # instead of being absorbed by the run() loop that exists for exactly that.
+        self._service_id = config.service_id
         self._session = session
         self._local = threading.local()
         self._pool: cf.ThreadPoolExecutor | None = None  # created on first sweep, see _probe_all
         self._stop = threading.Event()
         self._state: dict[str, _InstanceState] = {}
         self._log = get_logger("zonal.health").bind(
-            namespace=config.namespace, target_service=config.service, service_id=self._service_id
+            namespace=config.namespace, target_service=config.service
         )
+        if self._service_id is not None:
+            self._log = self._log.bind(service_id=self._service_id)
+
+    def service_id(self) -> str:
+        """The Cloud Map service id, resolved from namespace+service on first use if not given."""
+        if self._service_id is None:
+            self._service_id = resolve_service_id(self._sd, self._cfg.namespace, self._cfg.service)
+            self._log = self._log.bind(service_id=self._service_id)
+            self._log.info("service_id_resolved")
+        return self._service_id
 
     def _list_instances(self) -> list[Host]:
         resp = self._sd.discover_instances(
@@ -146,7 +157,7 @@ class HealthChecker:
         """Push a status to Cloud Map. False if the instance has since been deregistered."""
         try:
             self._sd.update_instance_custom_health_status(
-                ServiceId=self._service_id, InstanceId=instance_id, Status=status
+                ServiceId=self.service_id(), InstanceId=instance_id, Status=status
             )
         except self._sd.exceptions.InstanceNotFound:
             self._state.pop(instance_id, None)
@@ -155,6 +166,7 @@ class HealthChecker:
         return True
 
     def run_once(self) -> None:
+        self.service_id()  # resolve up front so a lookup failure is one clear error, not N
         # An instance with no InstanceId cannot be pushed a status, and would otherwise be keyed
         # under None in _state and sent to Cloud Map as InstanceId=None.
         hosts = [h for h in self._list_instances() if h.instance_id]

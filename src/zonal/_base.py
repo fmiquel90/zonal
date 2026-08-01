@@ -53,14 +53,30 @@ class BalancerBase:
 
     def __init__(self, config: DiscoveryConfig, az_id: str | None, logger_name: str):
         self._cfg = config
-        self._az_id = az_id or imds.get_az_id()
+        self._az_id = az_id
         self._router = Router(config.breaker_cooldown)
         self._log = get_logger(logger_name).bind(
-            namespace=config.namespace, target_service=config.service, az=self._az_id
+            namespace=config.namespace, target_service=config.service
         )
+        if az_id is not None:
+            self._set_az_id(az_id)
+
+    def _set_az_id(self, az_id: str) -> None:
+        self._az_id = az_id
+        self._log = self._log.bind(az=az_id)
+
+    def _resolve_az_id(self) -> str:
+        """Read the AZ-ID from IMDS. Blocking — subclasses decide where it is safe to call."""
+        self._set_az_id(imds.get_az_id(self._cfg.imds_timeout))
+        return self._az_id
 
     @property
-    def az_id(self) -> str:
+    def az_id(self) -> str | None:
+        """The caller's AZ-ID.
+
+        `None` only on an AsyncBalancer built inside a running event loop without an explicit
+        `az_id` and not yet started — see AsyncBalancer.start().
+        """
         return self._az_id
 
     def _discover_kwargs(self) -> dict:

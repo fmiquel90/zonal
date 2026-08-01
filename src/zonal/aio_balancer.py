@@ -11,18 +11,35 @@ from .discovery import client_config
 from .model import Host
 
 
+def _in_event_loop() -> bool:
+    try:
+        asyncio.get_running_loop()
+        return True
+    except RuntimeError:
+        return False
+
+
 class AsyncBalancer(BalancerBase):
     """Asyncio counterpart of Balancer. Selection and breaker feedback are sync (cheap); only
     discovery and lease() are async."""
 
     def __init__(self, config: DiscoveryConfig, *, boto_session: aioboto3.Session | None = None, az_id: str | None = None):
         super().__init__(config, az_id, "zonal.aiobalancer")
+        if self._az_id is None and not _in_event_loop():
+            # Constructed outside a loop, so a blocking read stalls nothing: resolve now and keep
+            # az_id populated from construction, as the sync client does. Inside a loop it is
+            # deferred to start(), which reads IMDS off-thread rather than freezing the loop for
+            # up to two round trips.
+            self._resolve_az_id()
         self._boto = boto_session or aioboto3.Session()
         self._task: asyncio.Task | None = None
         self._ready = asyncio.Event()
         self._closing = False
 
     async def start(self) -> "AsyncBalancer":
+        if self._az_id is None:
+            # imds.get_az_id blocks on a socket; run_in_executor keeps the loop serving while it does
+            await asyncio.get_running_loop().run_in_executor(None, self._resolve_az_id)
         self._task = asyncio.create_task(self._loop(), name="zonal-refresh")
         return self
 

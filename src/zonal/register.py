@@ -19,7 +19,7 @@ def register_instance(config: RegisterConfig, *, sd_client=None, metadata: dict 
         endpoint_url=config.endpoint_url,
         config=client_config(config),
     )
-    md = metadata or imds.metadata()
+    md = metadata or imds.metadata(config.imds_timeout)
     attrs = {
         config.ip_attribute: md["ipv4"],
         config.port_attribute: str(config.port),
