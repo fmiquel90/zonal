@@ -2,7 +2,7 @@ import boto3
 
 from . import imds
 from .config import RegisterConfig
-from .discovery import _boto_config
+from .discovery import _boto_config, client_config
 from .log import get_logger
 
 log = get_logger("zonal.register")
@@ -17,7 +17,7 @@ def register_instance(config: RegisterConfig, *, sd_client=None, metadata: dict 
         "servicediscovery",
         region_name=config.region,
         endpoint_url=config.endpoint_url,
-        config=_boto_config(config.endpoint_url),
+        config=client_config(config),
     )
     md = metadata or imds.metadata()
     attrs = {

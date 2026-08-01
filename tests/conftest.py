@@ -148,8 +148,10 @@ class BreakableEndpoint:
         parsed = urlparse(target)
         self._target = (parsed.hostname, parsed.port or 80)
         self._live: list[socket.socket] = []
+        self._held: list[socket.socket] = []
         self._lock = threading.Lock()
         self.up = True
+        self.blackholed = False
         self._srv = socket.socket()
         self._srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._srv.bind(("127.0.0.1", 0))
@@ -164,6 +166,11 @@ class BreakableEndpoint:
                 conn, _ = self._srv.accept()
             except OSError:
                 return
+            if self.blackholed:
+                # accept and then say nothing at all: the case botocore's default 60s read
+                # timeout turns into minutes of blocking
+                self._held.append(conn)
+                continue
             if not self.up:
                 conn.close()
                 continue
@@ -194,9 +201,8 @@ class BreakableEndpoint:
                 except OSError:
                     pass
 
-    def cut(self):
-        """Refuse new connections and drop the ones already open (including keep-alive)."""
-        self.up = False
+    def _drop_live(self):
+        """Close the sockets already open, so the client cannot keep-alive its way past a change."""
         with self._lock:
             live, self._live = self._live, []
         for s in live:
@@ -209,11 +215,28 @@ class BreakableEndpoint:
             except OSError:
                 pass
 
+    def cut(self):
+        """Refuse new connections and drop the ones already open (including keep-alive)."""
+        self.up = False
+        self._drop_live()
+
+    def blackhole(self):
+        """Accept connections and never answer — the pathology that makes timeouts matter."""
+        self.blackholed = True
+        self._drop_live()
+
     def heal(self):
         self.up = True
+        self.blackholed = False
 
     def stop(self):
         self._stopped = True
+        self.blackholed = False
+        for s in self._held:
+            try:
+                s.close()
+            except OSError:
+                pass
         self.cut()
         try:
             self._srv.close()

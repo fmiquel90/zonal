@@ -7,7 +7,7 @@ import aioboto3
 
 from ._base import BalancerBase
 from .config import DiscoveryConfig
-from .discovery import _boto_config
+from .discovery import client_config
 from .model import Host
 
 
@@ -44,7 +44,7 @@ class AsyncBalancer(BalancerBase):
             "servicediscovery",
             region_name=self._cfg.region,
             endpoint_url=self._cfg.endpoint_url,
-            config=_boto_config(self._cfg.endpoint_url),
+            config=client_config(self._cfg),
         ) as sd:
             while not self._closing:
                 try:

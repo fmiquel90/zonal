@@ -7,7 +7,7 @@ import requests
 
 from ._base import poll_forever
 from .config import HealthConfig
-from .discovery import _boto_config, parse_instances
+from .discovery import client_config, parse_instances
 from .log import configure_json_logging, get_logger
 from .model import Host
 
@@ -67,7 +67,7 @@ class HealthChecker:
             "servicediscovery",
             region_name=config.region,
             endpoint_url=config.endpoint_url,
-            config=_boto_config(config.endpoint_url),
+            config=client_config(config),
         )
         self._service_id = config.service_id or resolve_service_id(
             self._sd, config.namespace, config.service
@@ -215,6 +215,10 @@ def main(argv=None) -> None:
     p.add_argument("--concurrency", type=int, default=16)
     # Must match whatever RegisterConfig wrote and DiscoveryConfig reads, or the daemon lists
     # instances it cannot parse and silently sweeps nothing.
+    # `aws-` prefixed so they don't read as variants of --timeout, which bounds the /health probe
+    p.add_argument("--aws-connect-timeout", type=float, default=2.0)
+    p.add_argument("--aws-read-timeout", type=float, default=3.0)
+    p.add_argument("--aws-max-attempts", type=int, default=2, help="total Cloud Map requests, retries included")
     p.add_argument("--az-attribute", default="AZID")
     p.add_argument("--ip-attribute", default="AWS_INSTANCE_IPV4")
     p.add_argument("--port-attribute", default="AWS_INSTANCE_PORT")
@@ -238,6 +242,9 @@ def main(argv=None) -> None:
         az_attribute=args.az_attribute,
         ip_attribute=args.ip_attribute,
         port_attribute=args.port_attribute,
+        connect_timeout=args.aws_connect_timeout,
+        read_timeout=args.aws_read_timeout,
+        max_attempts=args.aws_max_attempts,
     )
     with HealthChecker(cfg) as checker:
         checker.run()

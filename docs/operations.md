@@ -25,6 +25,12 @@
 - **Cache-only hot path.** `pick()` never calls AWS; it reads the background-refreshed cache. A
   discovery failure keeps the last good host list (`discovery_refresh_failed` is logged) — stale but
   working beats an empty cache.
+- **Bounded Cloud Map calls.** Every client zonal builds carries a `connect_timeout`,
+  a `read_timeout` and an attempt cap (`2.0s` / `3.0s` / 2 by default), so a silent endpoint costs
+  the refresh loop about ten seconds rather than botocore's default of several minutes. The loop is
+  itself the retry, and a failed refresh keeps the cache, so failing fast loses nothing. Note the
+  balancer's refresh thread is a daemon: `close()` sets the stop flag but an in-flight call still
+  has to time out, so shutdown can lag by that budget.
 - **Starts-empty is safe.** `wait_ready()` returns once the first discovery completes, even if it
   found zero hosts; `pick()` then raises `NoHealthyHostError` rather than hanging.
 - **Custom endpoints.** All three configs take `endpoint_url` (and the daemon takes

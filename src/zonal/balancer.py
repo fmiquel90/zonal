@@ -6,7 +6,7 @@ import boto3
 
 from ._base import BalancerBase, poll_forever
 from .config import DiscoveryConfig
-from .discovery import _boto_config
+from .discovery import client_config
 from .model import Host
 
 
@@ -25,7 +25,7 @@ class Balancer(BalancerBase):
             "servicediscovery",
             region_name=config.region,
             endpoint_url=config.endpoint_url,
-            config=_boto_config(config.endpoint_url),
+            config=client_config(config),
         )
         self._stop = threading.Event()
         self._ready = threading.Event()

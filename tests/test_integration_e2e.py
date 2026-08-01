@@ -165,3 +165,31 @@ def test_deregistered_host_leaves_the_cache_and_comes_back(sd, cloud_map_service
         assert until(lambda: {balancer.pick().port for _ in range(6)} == {staying.port, leaving.port}), (
             "breaker entry for a departed host was not pruned when it re-registered"
         )
+
+
+def test_a_silent_endpoint_fails_fast_instead_of_blocking(sd, cloud_map_service, backends,
+                                                          breakable_endpoint):
+    """Cloud Map calls are bounded.
+
+    botocore defaults to 60s connect + 60s read with up to 5 attempts; against an endpoint that
+    accepts a connection and then goes silent, one DiscoverInstances was measured blocking for
+    over five minutes — on a loop that runs every few seconds. This pins the bound so a future
+    change to the client config cannot quietly restore it.
+    """
+    svc = cloud_map_service
+    _register(sd, svc, backends("euw1-az1"), "i-blackhole")
+
+    cfg = _discovery_cfg(svc, endpoint_url=breakable_endpoint.url, refresh_jitter=0.0)
+    balancer = Balancer(cfg, az_id="euw1-az1")  # not started: drive one refresh by hand
+    balancer._refresh_once()  # warm, and prove the forwarder works
+
+    breakable_endpoint.blackhole()
+    started = time.monotonic()
+    with pytest.raises(Exception):
+        balancer._refresh_once()
+    elapsed = time.monotonic() - started
+
+    budget = (cfg.connect_timeout + cfg.read_timeout) * cfg.max_attempts + 5  # + retry backoff
+    assert elapsed < budget, f"a silent endpoint blocked for {elapsed:.1f}s (budget {budget:.1f}s)"
+    # and the cache the warm-up filled is still intact
+    assert balancer.hosts(), "the failed refresh emptied the cache"

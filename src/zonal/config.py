@@ -15,6 +15,11 @@ class DiscoveryConfig:
     az_attribute: str = "AZID"
     ip_attribute: str = "AWS_INSTANCE_IPV4"
     port_attribute: str = "AWS_INSTANCE_PORT"
+    # bound every Cloud Map call: botocore's 60s defaults let a black-holed endpoint block a
+    # caller for minutes. max_attempts counts total requests, the first one included.
+    connect_timeout: float = 2.0
+    read_timeout: float = 3.0
+    max_attempts: int = 2
 
 
 @dataclass
@@ -29,6 +34,11 @@ class RegisterConfig:
     ip_attribute: str = "AWS_INSTANCE_IPV4"
     port_attribute: str = "AWS_INSTANCE_PORT"
     endpoint_url: str | None = None  # custom Cloud Map endpoint (VPC endpoint, or an emulator)
+    # bound every Cloud Map call: botocore's 60s defaults let a black-holed endpoint block a
+    # caller for minutes. max_attempts counts total requests, the first one included.
+    connect_timeout: float = 2.0
+    read_timeout: float = 3.0
+    max_attempts: int = 2
 
 
 @dataclass
@@ -51,3 +61,8 @@ class HealthConfig:
     ip_attribute: str = "AWS_INSTANCE_IPV4"
     port_attribute: str = "AWS_INSTANCE_PORT"
     endpoint_url: str | None = None  # custom Cloud Map endpoint (VPC endpoint, or an emulator)
+    # bound every Cloud Map call: botocore's 60s defaults let a black-holed endpoint block a
+    # caller for minutes. max_attempts counts total requests, the first one included.
+    connect_timeout: float = 2.0
+    read_timeout: float = 3.0
+    max_attempts: int = 2
