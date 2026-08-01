@@ -2,9 +2,10 @@
 
 ## Before you deploy
 
-- **🚨 Check the NAT Gateway first.** If this traffic traverses a NAT Gateway (`$0.045/GB`
-  processed), *that* dominates the bill — far above cross-AZ transfer. Make sure callers reach hosts
-  on private IPs directly.
+- **🚨 Check the NAT Gateway first.** If this traffic traverses a NAT Gateway (`$0.045/GB` processed
+  in `us-east-1`, `$0.048/GB` in `eu-west-1`, plus an hourly charge per gateway), *that* dominates
+  the bill — roughly 2–5× the `$0.02/GB` round-trip cross-AZ charge. Make sure callers reach hosts on
+  private IPs directly.
 - **🧮 Capacity per AZ.** Same-AZ is only free when each AZ holds healthy capacity. If a host type
   isn't in every AZ, the fallback fires and you pay cross-AZ — weigh idle capacity against transfer
   saved.

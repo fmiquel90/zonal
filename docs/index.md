@@ -15,12 +15,21 @@ host *in its own AZ*, falling back to other AZs only when it must.
 
 EC2 callers hit other EC2 hosts directly. With no load balancer enforcing locality, a caller in
 `az-A` happily talks to a host in `az-B` — and every gigabyte that crosses the AZ boundary is billed
-(~`$0.01/GB` *each way*). At hundreds of TB/month of east-west traffic, that is **thousands of
-dollars** of pure transfer cost.
+`$0.01/GB` **in each direction**, so `$0.02` per GB actually moved. At 100 TB/month of east-west
+traffic that is **~$2,000/month** of pure transfer cost; at hundreds of TB, several times that.
+Traffic that stays inside one AZ over private IPv4 is **free**.
 
-The usual fix — an internal NLB with cross-zone disabled — keeps traffic in-AZ but re-introduces a
-per-GB processing fee that, at that volume, costs nearly as much as the problem it solves. `zonal`
-keeps the traffic peer-to-peer and intra-AZ, which is free.
+The usual fix — an internal NLB with cross-zone load balancing disabled — is neither free nor
+automatic. Each node only forwards to targets in its own AZ, but DNS still hands the client one node
+IP per AZ, so a caller can land on a remote node unless you also enable AZ DNS affinity. And every
+gigabyte then pays an LCU processing fee (~`$0.006/GB` where processed bytes dominates) plus an
+hourly charge per AZ — cheaper than the cross-AZ transfer it replaces, but a per-GB tax on all of
+your traffic, plus a hop. `zonal` keeps the traffic peer-to-peer and intra-AZ, which is free.
+
+!!! info "Pricing figures"
+    List price, `us-east-1`/`eu-west-1`, checked August 2026. Verify for your region on the
+    [EC2 data transfer](https://aws.amazon.com/ec2/pricing/on-demand/) and
+    [ELB](https://aws.amazon.com/elasticloadbalancing/pricing/) pricing pages.
 
 ## How it works
 
@@ -46,8 +55,9 @@ keeps the traffic peer-to-peer and intra-AZ, which is free.
 
 - 🎯 **A healthy host in your AZ** — `pick()` returns a same-AZ host, falling back to other AZs only
   when none are healthy. zonal selects; you own the transport.
-- 🧭 **AZ affinity is client-side authoritative** — affinity is re-applied locally, so it behaves
-  identically on real AWS and on emulators that ignore `DiscoverInstances` `OptionalParameters`.
+- 🧭 **AZ affinity is client-side authoritative** — the server-side `DiscoverInstances`
+  `OptionalParameters` filter is opportunistic and fails open even on real AWS, so affinity is
+  re-applied locally and behaves identically everywhere, emulators included.
 - 🆔 **AZ-ID, not AZ-name** — AZ names are randomized per account; the AZ-ID (`euw1-az1`) is stable.
 - 🩺 **Two-layer health** — Cloud Map holds shared slow-moving status; the balancer adds a fast local
   circuit breaker you feed with `report_failure` / `report_success`.

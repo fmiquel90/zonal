@@ -25,14 +25,25 @@
 
 EC2 callers hit other EC2 hosts directly. With no load balancer enforcing locality, a caller in
 `az-A` happily talks to a host in `az-B` — and every gigabyte that crosses the AZ boundary is billed
-(~`$0.01/GB` *each way*). At hundreds of TB/month of east-west traffic, that's **thousands of
-dollars** of pure transfer cost.
+`$0.01/GB` **in each direction**, so `$0.02` per GB actually moved. At 100 TB/month of east-west
+traffic that's **~$2,000/month** of pure transfer cost; at hundreds of TB, several times that.
 
-The usual fix — an internal NLB with cross-zone disabled — keeps traffic in-AZ but **re-introduces a
-per-GB processing fee** that, at that volume, costs nearly as much as the problem it solves.
+Traffic that stays inside one AZ over private IPv4 is **free**. That gap is the whole opportunity.
+
+The usual fix — an internal NLB with cross-zone load balancing disabled — is neither free nor
+automatic. Each NLB node only forwards to targets in *its* AZ, but DNS still hands the client one
+node IP **per** AZ, so a caller can land on a remote node unless you also enable AZ DNS affinity or
+resolve the zonal hostname yourself. And every gigabyte then pays an LCU processing fee
+(~`$0.006/GB` where processed bytes is the dominant LCU dimension) plus an hourly charge per AZ.
+That is *cheaper* than the cross-AZ transfer it replaces — but it's a per-GB tax on 100% of your
+traffic, plus an extra hop.
 
 **`zonal` keeps the traffic peer-to-peer and intra-AZ — which is free** — by making each caller pick a
-healthy host *in its own AZ*, falling back to other AZs only when it must.
+healthy host *in its own AZ*, falling back to other AZs only when it must. No hop, no per-GB fee.
+
+> 💲 Figures are list price, `us-east-1`/`eu-west-1`, checked August 2026. Verify for your region on
+> the [EC2 data transfer](https://aws.amazon.com/ec2/pricing/on-demand/) and
+> [ELB](https://aws.amazon.com/elasticloadbalancing/pricing/) pricing pages.
 
 ## ✨ Features
 
@@ -40,10 +51,12 @@ healthy host *in its own AZ*, falling back to other AZs only when it must.
   falling back to other AZs only when none are healthy. zonal selects; **you own the transport**
   (your HTTP client, your auth, your streaming, your retries).
 - 🧭 **AZ affinity + fallback, client-side authoritative** — the balancer keeps same-AZ hosts when
-  any are healthy, else falls back to all healthy hosts (and emits a `cross_az_fallback` log). It
-  does *not* depend on the backend honoring `DiscoverInstances` `OptionalParameters` (real AWS does,
-  emulators don't), so affinity behaves identically everywhere — and is testable locally. The AZ-ID
-  is still sent as `OptionalParameters` to narrow the payload server-side when supported.
+  any are healthy, else falls back to all healthy hosts (and emits a `cross_az_fallback` log). The
+  AZ-ID *is* still sent as `DiscoverInstances` `OptionalParameters` to narrow the payload
+  server-side — but affinity never depends on it. AWS documents those as **opportunistic** filters
+  that fail open: when no instance matches, the filter is silently dropped and every instance comes
+  back. Emulators may ignore them outright. Re-applying affinity locally makes the behaviour
+  identical everywhere, and testable.
 - 🆔 **AZ-ID, not AZ-name** — AZ names are randomized per account; the AZ-ID (`euw1-az1`) is stable
   and physically consistent. Routing keys on the ID.
 - 🩺 **Two-layer health** — Cloud Map holds the shared, slow-moving status (pushed by the health
@@ -143,8 +156,10 @@ from zonal import RegisterConfig, register_instance
 register_instance(RegisterConfig(service_id="srv-xxxx", port=8080, region="eu-west-1"))
 ```
 
-> The Cloud Map service must be created (Terraform/infra) with `HealthCheckCustomConfig` — Route 53
-> health checks only work on public IPs, not your private hosts.
+> The Cloud Map service must be created (Terraform/infra) with `HealthCheckCustomConfig`. The
+> alternative, `HealthCheckConfig` (Route 53 health checks), is only supported on **public DNS and
+> HTTP namespaces** — Route 53's health checkers live outside your VPC and can't reach private
+> hosts — so it is not an option for a private DNS namespace.
 
 ### 🩺 Health service — one daemon per service
 
@@ -278,9 +293,11 @@ pytest -m integration                                # or set MINISTACK_ENDPOINT
 > `data-` host prefix (`data-servicediscovery.<region>...`). Against an emulator that resolves to
 > `data-localhost` and fails, so zonal disables the prefix automatically whenever `endpoint_url` is set.
 >
-> ⚠️ What MiniStack **can't** prove: the actual cross-AZ cost saving (only a real multi-AZ
-> environment bills that). Note MiniStack ignores `OptionalParameters`, but affinity is applied
-> client-side, so the demo below still shows correct same-AZ routing and fallback.
+> ⚠️ What MiniStack **can't** prove: the actual cross-AZ cost saving — only a real multi-AZ
+> environment bills that. Emulator fidelity also varies, so two integration assertions *skip* rather
+> than fail when the backend doesn't track custom health status, or doesn't filter on
+> `HealthStatus`/AZ the way real Cloud Map does. Affinity itself is applied client-side, so the demo
+> below shows correct same-AZ routing and fallback either way.
 
 ### ▶️ End-to-end demo
 
@@ -296,8 +313,9 @@ python examples/local_demo.py
 
 ## ☁️ Operational notes
 
-- **🚨 Check the NAT Gateway first.** If this traffic traverses a NAT Gateway (`$0.045/GB` processed),
-  *that* dominates the bill — far above cross-AZ. Make sure callers reach hosts on private IPs directly.
+- **🚨 Check the NAT Gateway first.** If this traffic traverses a NAT Gateway (`$0.045/GB` processed
+  in `us-east-1`, `$0.048/GB` in `eu-west-1`, plus an hourly charge), *that* dominates the bill —
+  roughly 2–5× cross-AZ. Make sure callers reach hosts on private IPs directly.
 - **🧮 Capacity per AZ.** Same-AZ is only free when each AZ holds healthy capacity. If GPU hosts aren't
   in every AZ, the fallback fires and you pay cross-AZ; weigh idle-GPU cost vs transfer saved.
 - **🔁 Retries.** On large payloads, cap retries — after `report_failure` the next `pick()` routes to

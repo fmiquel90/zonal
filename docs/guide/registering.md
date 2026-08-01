@@ -23,9 +23,10 @@ register_instance(RegisterConfig(service_id="srv-xxxx", port=8080, region="eu-we
 It returns the registered instance id.
 
 !!! warning "Custom health checks required"
-    The Cloud Map service must be created with `HealthCheckCustomConfig`. If it uses Route 53 health
-    checks instead, the initial `HEALTHY` push is skipped (`CustomHealthNotFound` is swallowed) — but
-    Route 53 checks can't reach private hosts, so custom health is the intended setup.
+    The Cloud Map service must be created with `HealthCheckCustomConfig`. If it uses `HealthCheckConfig`
+    (Route 53) instead, the initial `HEALTHY` push is skipped (`CustomHealthNotFound` is swallowed) —
+    and that combination is only reachable on a public DNS or HTTP namespace anyway, since Route 53's
+    health checkers can't reach private hosts. Custom health is the intended setup.
 
 ## Deregistering
 

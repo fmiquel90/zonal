@@ -36,9 +36,11 @@ def parse_instances(response: dict, cfg: DiscoveryConfig | HealthConfig) -> list
 def select_hosts(hosts: list[Host], az_id: str | None, prefer_same_az: bool) -> tuple[list[Host], bool]:
     """Authoritative AZ selection, client-side: same-AZ hosts when any exist, else all (fallback).
 
-    This does not rely on the backend honoring DiscoverInstances OptionalParameters (real AWS does;
-    emulators like MiniStack/LocalStack do not), so affinity behaves identically everywhere and is
-    testable locally. Returns (effective_hosts, is_cross_az_fallback).
+    This does not rely on the backend honoring DiscoverInstances OptionalParameters. AWS documents
+    those as opportunistic filters that fail open — when nothing matches, the filter is dropped and
+    every instance is returned — and emulators may ignore them outright. Re-applying affinity here
+    makes the behaviour identical everywhere and testable locally.
+    Returns (effective_hosts, is_cross_az_fallback).
     """
     if not prefer_same_az or not az_id:
         return hosts, False
@@ -55,9 +57,10 @@ def discover_kwargs(cfg: DiscoveryConfig, az_id: str | None) -> dict:
         "HealthStatus": "HEALTHY",
         "MaxResults": cfg.max_results,
     }
-    # OptionalParameters narrows the result to same-AZ hosts server-side (a bandwidth optimization
-    # in real AWS). It is NOT relied upon for correctness — select_hosts re-applies affinity
-    # client-side — so behavior is identical when the backend ignores it (e.g. emulators).
+    # OptionalParameters narrows the result to same-AZ hosts server-side — a bandwidth optimization,
+    # never a correctness guarantee: AWS applies these filters opportunistically and returns every
+    # instance when none match. select_hosts re-applies affinity client-side, so the outcome is the
+    # same whether the backend honours the filter, fails it open, or ignores it entirely.
     if cfg.prefer_same_az and az_id:
         kwargs["OptionalParameters"] = {cfg.az_attribute: az_id}
     return kwargs
