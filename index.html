@@ -755,11 +755,21 @@ client, your auth, your retries.</p>
 <h2 id="the-problem">The problem<a class="headerlink" href="#the-problem" title="Permanent link">&para;</a></h2>
 <p>EC2 callers hit other EC2 hosts directly. With no load balancer enforcing locality, a caller in
 <code>az-A</code> happily talks to a host in <code>az-B</code> — and every gigabyte that crosses the AZ boundary is billed
-(~<code>$0.01/GB</code> <em>each way</em>). At hundreds of TB/month of east-west traffic, that is <strong>thousands of
-dollars</strong> of pure transfer cost.</p>
-<p>The usual fix — an internal NLB with cross-zone disabled — keeps traffic in-AZ but re-introduces a
-per-GB processing fee that, at that volume, costs nearly as much as the problem it solves. <code>zonal</code>
-keeps the traffic peer-to-peer and intra-AZ, which is free.</p>
+<code>$0.01/GB</code> <strong>in each direction</strong>, so <code>$0.02</code> per GB actually moved. At 100 TB/month of east-west
+traffic that is <strong>~$2,000/month</strong> of pure transfer cost; at hundreds of TB, several times that.
+Traffic that stays inside one AZ over private IPv4 is <strong>free</strong>.</p>
+<p>The usual fix — an internal NLB with cross-zone load balancing disabled — is neither free nor
+automatic. Each node only forwards to targets in its own AZ, but DNS still hands the client one node
+IP per AZ, so a caller can land on a remote node unless you also enable AZ DNS affinity. And every
+gigabyte then pays an LCU processing fee (~<code>$0.006/GB</code> where processed bytes dominates) plus an
+hourly charge per AZ — cheaper than the cross-AZ transfer it replaces, but a per-GB tax on all of
+your traffic, plus a hop. <code>zonal</code> keeps the traffic peer-to-peer and intra-AZ, which is free.</p>
+<div class="admonition info">
+<p class="admonition-title">Pricing figures</p>
+<p>List price, <code>us-east-1</code>/<code>eu-west-1</code>, checked August 2026. Verify for your region on the
+<a href="https://aws.amazon.com/ec2/pricing/on-demand/">EC2 data transfer</a> and
+<a href="https://aws.amazon.com/elasticloadbalancing/pricing/">ELB</a> pricing pages.</p>
+</div>
 <h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>  caller (in az-A)                                         target hosts
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a> ┌─────────────────────────────────────┐
@@ -781,8 +791,9 @@ keeps the traffic peer-to-peer and intra-AZ, which is free.</p>
 <ul>
 <li>🎯 <strong>A healthy host in your AZ</strong> — <code>pick()</code> returns a same-AZ host, falling back to other AZs only
   when none are healthy. zonal selects; you own the transport.</li>
-<li>🧭 <strong>AZ affinity is client-side authoritative</strong> — affinity is re-applied locally, so it behaves
-  identically on real AWS and on emulators that ignore <code>DiscoverInstances</code> <code>OptionalParameters</code>.</li>
+<li>🧭 <strong>AZ affinity is client-side authoritative</strong> — the server-side <code>DiscoverInstances</code>
+  <code>OptionalParameters</code> filter is opportunistic and fails open even on real AWS, so affinity is
+  re-applied locally and behaves identically everywhere, emulators included.</li>
 <li>🆔 <strong>AZ-ID, not AZ-name</strong> — AZ names are randomized per account; the AZ-ID (<code>euw1-az1</code>) is stable.</li>
 <li>🩺 <strong>Two-layer health</strong> — Cloud Map holds shared slow-moving status; the balancer adds a fast local
   circuit breaker you feed with <code>report_failure</code> / <code>report_success</code>.</li>

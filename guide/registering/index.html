@@ -689,17 +689,20 @@ AZ-ID is what callers key on for affinity.</p>
 <ol>
 <li>reads the instance's IP, instance-id, and AZ-ID from IMDS (or accepts an explicit <code>metadata</code>
    dict — used in tests and the demo);</li>
-<li>writes them to Cloud Map as <code>AWS_INSTANCE_IPV4</code>, <code>AWS_INSTANCE_PORT</code>, and the AZ attribute
-   (<code>AZID</code> by default), plus any <code>extra_attributes</code>;</li>
+<li>writes them to Cloud Map as <code>AWS_INSTANCE_IPV4</code>, <code>AWS_INSTANCE_PORT</code> and <code>AZID</code> — the defaults of
+   <code>ip_attribute</code> / <code>port_attribute</code> / <code>az_attribute</code> — plus any <code>extra_attributes</code>. Override a key
+   here and you must override the matching one on <code>DiscoveryConfig</code> and <code>HealthConfig</code> too, or
+   callers discover nothing;</li>
 <li>pushes an initial <code>HEALTHY</code> custom status so the host serves immediately, then lets the
    <a href="../health-service/">health service</a> own its status from there.</li>
 </ol>
 <p>It returns the registered instance id.</p>
 <div class="admonition warning">
 <p class="admonition-title">Custom health checks required</p>
-<p>The Cloud Map service must be created with <code>HealthCheckCustomConfig</code>. If it uses Route 53 health
-checks instead, the initial <code>HEALTHY</code> push is skipped (<code>CustomHealthNotFound</code> is swallowed) — but
-Route 53 checks can't reach private hosts, so custom health is the intended setup.</p>
+<p>The Cloud Map service must be created with <code>HealthCheckCustomConfig</code>. If it uses <code>HealthCheckConfig</code>
+(Route 53) instead, the initial <code>HEALTHY</code> push is skipped (<code>CustomHealthNotFound</code> is swallowed) —
+and that combination is only reachable on a public DNS or HTTP namespace anyway, since Route 53's
+health checkers can't reach private hosts. Custom health is the intended setup.</p>
 </div>
 <h2 id="deregistering">Deregistering<a class="headerlink" href="#deregistering" title="Permanent link">&para;</a></h2>
 <p>On graceful shutdown, remove the instance so callers stop discovering it:</p>

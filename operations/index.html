@@ -723,9 +723,10 @@
 <h1 id="operations">Operations<a class="headerlink" href="#operations" title="Permanent link">&para;</a></h1>
 <h2 id="before-you-deploy">Before you deploy<a class="headerlink" href="#before-you-deploy" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>🚨 Check the NAT Gateway first.</strong> If this traffic traverses a NAT Gateway (<code>$0.045/GB</code>
-  processed), <em>that</em> dominates the bill — far above cross-AZ transfer. Make sure callers reach hosts
-  on private IPs directly.</li>
+<li><strong>🚨 Check the NAT Gateway first.</strong> If this traffic traverses a NAT Gateway (<code>$0.045/GB</code> processed
+  in <code>us-east-1</code>, <code>$0.048/GB</code> in <code>eu-west-1</code>, plus an hourly charge per gateway), <em>that</em> dominates
+  the bill — roughly 2–5× the <code>$0.02/GB</code> round-trip cross-AZ charge. Make sure callers reach hosts on
+  private IPs directly.</li>
 <li><strong>🧮 Capacity per AZ.</strong> Same-AZ is only free when each AZ holds healthy capacity. If a host type
   isn't in every AZ, the fallback fires and you pay cross-AZ — weigh idle capacity against transfer
   saved.</li>
@@ -747,7 +748,7 @@
 </tr>
 <tr>
 <td>Target hosts</td>
-<td><code>servicediscovery:RegisterInstance</code>, <code>servicediscovery:UpdateInstanceCustomHealthStatus</code></td>
+<td><code>servicediscovery:RegisterInstance</code>, <code>servicediscovery:DeregisterInstance</code>, <code>servicediscovery:UpdateInstanceCustomHealthStatus</code></td>
 </tr>
 <tr>
 <td>Health service</td>
@@ -760,11 +761,19 @@
 <li><strong>Cache-only hot path.</strong> <code>pick()</code> never calls AWS; it reads the background-refreshed cache. A
   discovery failure keeps the last good host list (<code>discovery_refresh_failed</code> is logged) — stale but
   working beats an empty cache.</li>
+<li><strong>Bounded Cloud Map calls.</strong> Every client zonal builds carries a <code>connect_timeout</code>,
+  a <code>read_timeout</code> and an attempt cap (<code>2.0s</code> / <code>3.0s</code> / 2 by default), so a silent endpoint costs
+  the refresh loop about ten seconds rather than botocore's default of several minutes. The loop is
+  itself the retry, and a failed refresh keeps the cache, so failing fast loses nothing. Note the
+  balancer's refresh thread is a daemon: <code>close()</code> sets the stop flag but an in-flight call still
+  has to time out, so shutdown can lag by that budget.</li>
 <li><strong>Starts-empty is safe.</strong> <code>wait_ready()</code> returns once the first discovery completes, even if it
   found zero hosts; <code>pick()</code> then raises <code>NoHealthyHostError</code> rather than hanging.</li>
-<li><strong>Custom endpoints.</strong> When <code>endpoint_url</code> is set (VPC endpoint, MiniStack, LocalStack), zonal
-  disables botocore's <code>data-</code> host prefix automatically — <code>DiscoverInstances</code> is a data-plane call
-  whose prefix points nowhere against a custom endpoint.</li>
+<li><strong>Custom endpoints.</strong> All three configs take <code>endpoint_url</code> (and the daemon takes
+  <code>--endpoint-url</code>), so callers, registering hosts and the health daemon can all be pointed at a
+  VPC endpoint or an emulator. Setting it also disables botocore's <code>data-</code> host prefix
+  automatically — <code>DiscoverInstances</code> is a data-plane call whose prefix resolves to nothing against
+  a custom endpoint (you would see <code>data-localhost</code> in the error).</li>
 </ul>
 
 

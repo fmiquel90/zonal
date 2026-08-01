@@ -833,7 +833,9 @@ ejects that host and re-raises; a clean exit marks it healthy.</p>
 </code></pre></div>
 <h2 id="async-caller">Async caller<a class="headerlink" href="#async-caller" title="Permanent link">&para;</a></h2>
 <p><code>AsyncBalancer</code> mirrors the sync API; <code>start</code> / <code>wait_ready</code> / <code>lease</code> are async, while <code>pick</code>,
-<code>report_*</code>, and <code>hosts</code> stay synchronous (they are cheap and lock-free under asyncio).</p>
+<code>report_*</code>, and <code>hosts</code> stay synchronous. They read an in-memory cache behind a <code>threading.Lock</code>
+that is uncontended under asyncio (a single thread) and cheap under threads, so there is nothing to
+await.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">httpx</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">zonal</span><span class="w"> </span><span class="kn">import</span> <span class="n">AsyncBalancer</span><span class="p">,</span> <span class="n">DiscoveryConfig</span>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>

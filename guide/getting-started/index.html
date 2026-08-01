@@ -749,11 +749,11 @@
 <div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Sync only</label><label for="__tabbed_1_2">With async (aioboto3)</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;zonal @ git+ssh://git@github.com/&lt;org&gt;/zonal.git@v0.1.0&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;zonal @ git+https://github.com/fmiquel90/zonal.git@main&quot;</span>
 </code></pre></div>
 </div>
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;zonal[aio] @ git+ssh://git@github.com/&lt;org&gt;/zonal.git@v0.1.0&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;zonal[aio] @ git+https://github.com/fmiquel90/zonal.git@main&quot;</span>
 </code></pre></div>
 </div>
 </div>
@@ -761,9 +761,11 @@
 <p>zonal targets <strong>Python 3.10+</strong> and depends on <code>boto3</code>, <code>requests</code>, and <code>structlog</code>. The async
 balancer additionally needs <code>aioboto3</code> (the <code>[aio]</code> extra).</p>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
-<p>zonal routes over an existing <strong>AWS Cloud Map</strong> service. The service must be created (via your infra
-tooling) with <code>HealthCheckCustomConfig</code> — Route 53 health checks only work on public IPs, not your
-private hosts. See <a href="../../operations/#required-iam">required IAM</a>.</p>
+<p>zonal routes over an existing <strong>AWS Cloud Map</strong> service, created with <code>HealthCheckCustomConfig</code> via
+your infra tooling. The alternative, <code>HealthCheckConfig</code> (Route 53 health checks), is only supported
+on public DNS and HTTP namespaces — Route 53's health checkers sit outside your VPC and can't reach
+private hosts — so a private DNS namespace leaves custom health checks as the only option. See
+<a href="../../operations/#required-iam">required IAM</a>.</p>
 <h2 id="your-first-call">Your first call<a class="headerlink" href="#your-first-call" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">requests</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">zonal</span><span class="w"> </span><span class="kn">import</span> <span class="n">Balancer</span><span class="p">,</span> <span class="n">DiscoveryConfig</span><span class="p">,</span> <span class="n">configure_json_logging</span>

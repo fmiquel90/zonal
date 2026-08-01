@@ -712,6 +712,13 @@ on its own behalf.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>zonal-healthcheck<span class="w"> </span>--namespace<span class="w"> </span>services.internal<span class="w"> </span>--service<span class="w"> </span>backend<span class="w"> </span>--region<span class="w"> </span>eu-west-1<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">    </span>--healthy-threshold<span class="w"> </span><span class="m">2</span><span class="w"> </span>--unhealthy-threshold<span class="w"> </span><span class="m">3</span><span class="w"> </span>--concurrency<span class="w"> </span><span class="m">16</span><span class="w"> </span>--timeout<span class="w"> </span><span class="m">2</span>
 </code></pre></div>
+<p>If your hosts register under non-default Cloud Map attribute keys, the daemon has to be told, or it
+lists instances it cannot parse and sweeps zero hosts. <code>--endpoint-url</code> points it at a VPC endpoint
+or a local emulator:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>zonal-healthcheck<span class="w"> </span>--namespace<span class="w"> </span>services.internal<span class="w"> </span>--service<span class="w"> </span>backend<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">    </span>--ip-attribute<span class="w"> </span>MY_IPV4<span class="w"> </span>--port-attribute<span class="w"> </span>MY_PORT<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span>--endpoint-url<span class="w"> </span>http://localhost:4566
+</code></pre></div>
 <h2 id="what-a-sweep-does">What a sweep does<a class="headerlink" href="#what-a-sweep-does" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>Discover</strong> every instance for the service (<code>HealthStatus=ALL</code>).</li>
@@ -753,6 +760,13 @@ for failures a caller observes directly. See <a href="../calling/#the-circuit-br
 <p class="admonition-title">Run it as its own process</p>
 <p>The CLI configures JSON logging itself (it owns its process). Run one daemon per service, e.g. as
 a systemd unit or a small ECS/Fargate task.</p>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Embedding <code>HealthChecker</code> instead of running the CLI</p>
+<p>Probes share one thread pool across sweeps. <code>run()</code> releases it when <code>stop()</code> makes it return,
+so the daemon path needs nothing extra — but if you drive sweeps yourself with <code>run_once()</code>,
+use the checker as a context manager (or call <code>close()</code>), otherwise its worker threads stay
+alive as long as the object does.</p>
 </div>
 
 

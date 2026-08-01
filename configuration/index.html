@@ -748,6 +748,21 @@
 <td>custom Cloud Map endpoint (VPC endpoint, or MiniStack in tests)</td>
 </tr>
 <tr>
+<td><code>connect_timeout</code> / <code>read_timeout</code></td>
+<td><code>2.0</code> / <code>3.0</code></td>
+<td>per-request bounds on every Cloud Map call (seconds)</td>
+</tr>
+<tr>
+<td><code>max_attempts</code></td>
+<td><code>2</code></td>
+<td>total Cloud Map requests per call, the first one included</td>
+</tr>
+<tr>
+<td><code>imds_timeout</code></td>
+<td><code>2.0</code></td>
+<td>bound on the IMDS lookup behind an auto-detected AZ-ID (seconds)</td>
+</tr>
+<tr>
 <td><code>refresh_interval</code> / <code>refresh_jitter</code></td>
 <td><code>5.0</code> / <code>1.0</code></td>
 <td>background discovery cadence (seconds)</td>
@@ -810,6 +825,26 @@
 <td>AWS region</td>
 </tr>
 <tr>
+<td><code>endpoint_url</code></td>
+<td><code>None</code></td>
+<td>custom Cloud Map endpoint (VPC endpoint, or an emulator)</td>
+</tr>
+<tr>
+<td><code>connect_timeout</code> / <code>read_timeout</code></td>
+<td><code>2.0</code> / <code>3.0</code></td>
+<td>per-request bounds on every Cloud Map call (seconds)</td>
+</tr>
+<tr>
+<td><code>max_attempts</code></td>
+<td><code>2</code></td>
+<td>total Cloud Map requests per call, the first one included</td>
+</tr>
+<tr>
+<td><code>imds_timeout</code></td>
+<td><code>2.0</code></td>
+<td>bound on the IMDS lookup behind an auto-detected AZ-ID (seconds)</td>
+</tr>
+<tr>
 <td><code>az_attribute</code></td>
 <td><code>AZID</code></td>
 <td>Cloud Map attribute key the AZ-ID is written under</td>
@@ -852,6 +887,26 @@
 <td>resolved from <code>namespace</code>+<code>service</code> if omitted</td>
 </tr>
 <tr>
+<td><code>region</code></td>
+<td><code>None</code></td>
+<td>AWS region</td>
+</tr>
+<tr>
+<td><code>endpoint_url</code></td>
+<td><code>None</code></td>
+<td>custom Cloud Map endpoint (VPC endpoint, or an emulator)</td>
+</tr>
+<tr>
+<td><code>connect_timeout</code> / <code>read_timeout</code></td>
+<td><code>2.0</code> / <code>3.0</code></td>
+<td>per-request bounds on every Cloud Map call (seconds)</td>
+</tr>
+<tr>
+<td><code>max_attempts</code></td>
+<td><code>2</code></td>
+<td>total Cloud Map requests per call, the first one included</td>
+</tr>
+<tr>
 <td><code>health_path</code> / <code>scheme</code></td>
 <td><code>/health</code> / <code>http</code></td>
 <td>probe target</td>
@@ -872,11 +927,6 @@
 <td>parallel probes per sweep</td>
 </tr>
 <tr>
-<td><code>az_attribute</code></td>
-<td><code>AZID</code></td>
-<td>Cloud Map attribute holding the AZ-ID</td>
-</tr>
-<tr>
 <td><code>ip_attribute</code></td>
 <td><code>AWS_INSTANCE_IPV4</code></td>
 <td>Cloud Map attribute holding the host IP</td>
@@ -886,13 +936,30 @@
 <td><code>AWS_INSTANCE_PORT</code></td>
 <td>Cloud Map attribute holding the host port</td>
 </tr>
+<tr>
+<td><code>az_attribute</code></td>
+<td><code>AZID</code></td>
+<td>attribute parsed onto <code>Host.az</code>; the daemon does not route on AZ, so a wrong value here is inert</td>
+</tr>
 </tbody>
 </table>
+<p>All of these are CLI flags too: <code>--endpoint-url</code>, <code>--ip-attribute</code>, <code>--port-attribute</code>,
+<code>--az-attribute</code>, and — prefixed so they don't read as variants of <code>--timeout</code>, which bounds the
+<code>/health</code> probe — <code>--aws-connect-timeout</code>, <code>--aws-read-timeout</code>, <code>--aws-max-attempts</code>.</p>
+<div class="admonition warning">
+<p class="admonition-title">Don't unbound the Cloud Map calls</p>
+<p>botocore's own defaults are a 60s connect and 60s read with up to 5 attempts. Against an
+endpoint that accepts a connection and then goes silent — a black-holed VPC endpoint, a
+security group changed under you — a single <code>DiscoverInstances</code> was measured blocking for
+<strong>over five minutes</strong>, on a loop that runs every few seconds. zonal bounds it to roughly ten.
+Raise these if your link is genuinely slow; do not remove them.</p>
+</div>
 <div class="admonition warning">
 <p class="admonition-title">Keep the attribute keys consistent</p>
-<p>The <code>*_attribute</code> keys describe one schema written by <code>RegisterConfig</code> and read by both
-<code>DiscoveryConfig</code> and <code>HealthConfig</code>. Override a key in one place and you must override it in
-all three — otherwise the balancer discovers nothing, or the health daemon probes nothing.</p>
+<p>The <code>ip_attribute</code> / <code>port_attribute</code> keys describe one schema written by <code>RegisterConfig</code> and
+read by both <code>DiscoveryConfig</code> and <code>HealthConfig</code>. Override a key in one place and you must
+override it in all three — otherwise the balancer discovers nothing, or the health daemon lists
+instances it cannot parse and silently sweeps zero hosts.</p>
 </div>
 <div class="admonition tip">
 <p class="admonition-title">Same-AZ requires capacity in every AZ</p>

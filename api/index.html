@@ -675,6 +675,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#also-exported" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Also exported
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -786,6 +797,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#also-exported" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Also exported
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -824,7 +846,7 @@ pass <code>az_id</code>; <code>sd_client</code> injects a preconfigured boto3 cl
 </tr>
 <tr>
 <td><code>.wait_ready(timeout=None) -&gt; bool</code></td>
-<td>block until the first discovery completes</td>
+<td>block until the first discovery completes (even if it found no hosts); <code>False</code> on timeout</td>
 </tr>
 <tr>
 <td><code>.pick() -&gt; Host</code></td>
@@ -847,8 +869,8 @@ pass <code>az_id</code>; <code>sd_client</code> injects a preconfigured boto3 cl
 <td>the caller's resolved AZ-ID</td>
 </tr>
 <tr>
-<td><code>.close()</code></td>
-<td>stop the refresh loop</td>
+<td><code>.close(timeout=None) -&gt; bool</code></td>
+<td>stop the refresh loop; <code>True</code> once it has actually stopped. Non-blocking by default (the thread is a daemon); pass a timeout to wait</td>
 </tr>
 </tbody>
 </table>
@@ -857,6 +879,11 @@ pass <code>az_id</code>; <code>sd_client</code> injects a preconfigured boto3 cl
 <code>lease</code> are async (<code>await</code> / <code>async with</code>); <code>pick</code>, <code>report_*</code>, and <code>hosts</code> stay synchronous. It
 takes an <code>aioboto3.Session</code> (<code>boto_session</code>) rather than a ready-made client, since the async client
 is an <code>async with</code> resource owned by the refresh loop.</p>
+<p>One deliberate difference: constructed <strong>inside a running event loop</strong> without an explicit <code>az_id</code>,
+it does not read IMDS in <code>__init__</code> — that would freeze the loop for up to two blocking round
+trips, and the documented usage (<code>async with AsyncBalancer(cfg) as balancer</code>) is exactly that case.
+Resolution moves to <code>start()</code>, which runs it off-thread, so <code>.az_id</code> is <code>None</code> in between.
+Constructed outside a loop there is nothing to stall, so it resolves eagerly like the sync client.</p>
 <p><code>AsyncBalancer</code> is resolved lazily and kept out of <code>from zonal import *</code>, so importing <code>zonal</code>
 doesn't require the <code>[aio]</code> extra:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">zonal</span><span class="w"> </span><span class="kn">import</span> <span class="n">AsyncBalancer</span>
@@ -866,11 +893,34 @@ doesn't require the <code>[aio]</code> extra:</p>
 <h2 id="registration">Registration<a class="headerlink" href="#registration" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>register_instance(config, *, sd_client=None, metadata=None) -&gt; str</code></li>
-<li><code>deregister_instance(service_id, instance_id, *, sd_client=None, region=None) -&gt; None</code></li>
+<li><code>deregister_instance(service_id, instance_id, *, sd_client=None, region=None, endpoint_url=None) -&gt; None</code></li>
 </ul>
 <h2 id="health">Health<a class="headerlink" href="#health" title="Permanent link">&para;</a></h2>
+<p><code>HealthChecker(config, *, sd_client=None, session=None)</code> — <code>.run()</code>, <code>.run_once()</code>, <code>.stop()</code>,
+<code>.close()</code>, <code>.service_id()</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>Behaviour</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Construction</td>
+<td>No I/O. When <code>service_id</code> is omitted it is resolved from <code>namespace</code>+<code>service</code> on the first sweep, so a throttle at boot is retried by the <code>run()</code> loop instead of killing the process</td>
+</tr>
+<tr>
+<td>Stopping</td>
+<td><code>stop()</code> asks <code>run()</code> to finish its current sweep and return; safe from another thread</td>
+</tr>
+<tr>
+<td>Threads</td>
+<td>Probes share one pool across sweeps. <code>run()</code> releases it on exit; if you drive sweeps yourself with <code>run_once()</code>, call <code>.close()</code> or use the checker as a context manager, or its workers live as long as the object</td>
+</tr>
+</tbody>
+</table>
 <ul>
-<li><code>HealthChecker(config, *, sd_client=None, session=None)</code> — <code>.run()</code>, <code>.run_once()</code>, <code>.stop()</code>.</li>
 <li><code>resolve_service_id(sd, namespace_name, service_name) -&gt; str</code></li>
 </ul>
 <h2 id="logging">Logging<a class="headerlink" href="#logging" title="Permanent link">&para;</a></h2>
@@ -882,6 +932,19 @@ doesn't require the <code>[aio]</code> extra:</p>
 <ul>
 <li><code>ZonalError</code> — base class.</li>
 <li><code>NoHealthyHostError</code> — raised by <code>pick()</code> when the cache is empty.</li>
+<li><code>ImdsError</code> — the metadata service was unreachable or too slow (bounded by <code>imds_timeout</code>).</li>
+</ul>
+<p><code>botocore</code> exceptions from the AWS calls still surface as-is, so <code>except ZonalError</code> does <strong>not</strong>
+catch those.</p>
+<h2 id="also-exported">Also exported<a class="headerlink" href="#also-exported" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>Router(breaker_cooldown=10.0, clock=time.monotonic)</code> — the host cache, round-robin picker and
+  circuit breaker each balancer wraps. Exported for direct use and testing.</li>
+<li><code>imds</code> — <code>get_az_id(timeout=2.0)</code> and <code>metadata(timeout=2.0)</code>, over IMDSv2. Both are cached for
+  the process (the values are immutable for the instance's lifetime, and caching both keeps them
+  from disagreeing); the dict <code>metadata()</code> returns is shared, so treat it as read-only. Transport
+  failures raise <code>ImdsError</code>. Off EC2, don't reach for IMDS at all — pass <code>az_id=</code> to a balancer or
+  <code>metadata=</code> to <code>register_instance</code>.</li>
 </ul>
 
 
