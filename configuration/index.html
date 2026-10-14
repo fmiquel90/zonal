@@ -754,8 +754,8 @@
 </tr>
 <tr>
 <td><code>max_attempts</code></td>
-<td><code>2</code></td>
-<td>total Cloud Map requests per call, the first one included</td>
+<td><code>None</code></td>
+<td>total Cloud Map requests per call, the first one included; <code>None</code> defers to <code>AWS_MAX_ATTEMPTS</code> / <code>AWS_RETRY_MODE</code> or the profile when either is set, else uses 2</td>
 </tr>
 <tr>
 <td><code>imds_timeout</code></td>
@@ -836,13 +836,13 @@
 </tr>
 <tr>
 <td><code>max_attempts</code></td>
-<td><code>2</code></td>
-<td>total Cloud Map requests per call, the first one included</td>
+<td><code>None</code></td>
+<td>total Cloud Map requests per call, the first one included; <code>None</code> defers to <code>AWS_MAX_ATTEMPTS</code> / <code>AWS_RETRY_MODE</code> or the profile when either is set, else uses 5 — registration runs once at boot with nothing behind it to retry</td>
 </tr>
 <tr>
 <td><code>imds_timeout</code></td>
 <td><code>2.0</code></td>
-<td>bound on the IMDS lookup behind an auto-detected AZ-ID (seconds)</td>
+<td>per-request bound on the IMDS lookups (instance id, IP, AZ-ID, region) made when <code>metadata=</code> is not passed (seconds)</td>
 </tr>
 <tr>
 <td><code>az_attribute</code></td>
@@ -894,7 +894,12 @@
 <tr>
 <td><code>endpoint_url</code></td>
 <td><code>None</code></td>
-<td>custom Cloud Map endpoint (VPC endpoint, or an emulator)</td>
+<td>custom endpoint for the control-plane calls: status pushes and the service-id lookup (<code>servicediscovery</code> VPC endpoint, or an emulator)</td>
+</tr>
+<tr>
+<td><code>discovery_endpoint_url</code></td>
+<td><code>endpoint_url</code></td>
+<td>custom endpoint for <code>DiscoverInstances</code> (the <code>data-servicediscovery</code> VPC endpoint). AWS serves the two planes from separate VPC endpoint services, so the daemon needs both when you use interface endpoints without private DNS</td>
 </tr>
 <tr>
 <td><code>connect_timeout</code> / <code>read_timeout</code></td>
@@ -903,8 +908,8 @@
 </tr>
 <tr>
 <td><code>max_attempts</code></td>
-<td><code>2</code></td>
-<td>total Cloud Map requests per call, the first one included</td>
+<td><code>None</code></td>
+<td>total Cloud Map requests per call, the first one included; <code>None</code> defers to <code>AWS_MAX_ATTEMPTS</code> / <code>AWS_RETRY_MODE</code> or the profile when either is set, else uses 2</td>
 </tr>
 <tr>
 <td><code>health_path</code> / <code>scheme</code></td>
@@ -924,7 +929,7 @@
 <tr>
 <td><code>concurrency</code></td>
 <td><code>16</code></td>
-<td>parallel probes per sweep</td>
+<td>parallel probes per sweep; must be at least 1</td>
 </tr>
 <tr>
 <td><code>ip_attribute</code></td>
@@ -943,7 +948,7 @@
 </tr>
 </tbody>
 </table>
-<p>All of these are CLI flags too: <code>--endpoint-url</code>, <code>--ip-attribute</code>, <code>--port-attribute</code>,
+<p>All of these are CLI flags too: <code>--endpoint-url</code>, <code>--discovery-endpoint-url</code>, <code>--ip-attribute</code>, <code>--port-attribute</code>,
 <code>--az-attribute</code>, and — prefixed so they don't read as variants of <code>--timeout</code>, which bounds the
 <code>/health</code> probe — <code>--aws-connect-timeout</code>, <code>--aws-read-timeout</code>, <code>--aws-max-attempts</code>.</p>
 <div class="admonition warning">

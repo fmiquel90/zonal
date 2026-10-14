@@ -869,8 +869,12 @@ pass <code>az_id</code>; <code>sd_client</code> injects a preconfigured boto3 cl
 <td>the caller's resolved AZ-ID</td>
 </tr>
 <tr>
-<td><code>.close(timeout=None) -&gt; bool</code></td>
-<td>stop the refresh loop; <code>True</code> once it has actually stopped. Non-blocking by default (the thread is a daemon); pass a timeout to wait</td>
+<td><code>.close()</code></td>
+<td>stop the refresh loop. Non-blocking: the thread is a daemon and never holds up process exit</td>
+</tr>
+<tr>
+<td><code>.wait_closed(timeout=None) -&gt; bool</code></td>
+<td>block until the loop has stopped after <code>close()</code>; <code>False</code> on timeout</td>
 </tr>
 </tbody>
 </table>
@@ -908,15 +912,15 @@ doesn't require the <code>[aio]</code> extra:</p>
 <tbody>
 <tr>
 <td>Construction</td>
-<td>No I/O. When <code>service_id</code> is omitted it is resolved from <code>namespace</code>+<code>service</code> on the first sweep, so a throttle at boot is retried by the <code>run()</code> loop instead of killing the process</td>
+<td>No I/O. When <code>service_id</code> is omitted (or empty) it is resolved from <code>namespace</code>+<code>service</code> on the first sweep, so a throttle at boot is retried by the <code>run()</code> loop instead of killing the process. A namespace or service that does not exist is not retried: <code>run()</code> raises <code>ServiceNotFoundError</code></td>
 </tr>
 <tr>
 <td>Stopping</td>
-<td><code>stop()</code> asks <code>run()</code> to finish its current sweep and return; safe from another thread</td>
+<td><code>stop()</code> asks <code>run()</code> to finish its current sweep and return, and releases the probe pool; safe from another thread</td>
 </tr>
 <tr>
 <td>Threads</td>
-<td>Probes share one pool across sweeps. <code>run()</code> releases it on exit; if you drive sweeps yourself with <code>run_once()</code>, call <code>.close()</code> or use the checker as a context manager, or its workers live as long as the object</td>
+<td>Probes share one pool across sweeps. <code>run()</code>, <code>stop()</code>, <code>close()</code> and the context manager all release it; a later <code>run_once()</code> builds a new one</td>
 </tr>
 </tbody>
 </table>
@@ -932,6 +936,7 @@ doesn't require the <code>[aio]</code> extra:</p>
 <ul>
 <li><code>ZonalError</code> — base class.</li>
 <li><code>NoHealthyHostError</code> — raised by <code>pick()</code> when the cache is empty.</li>
+<li><code>ServiceNotFoundError</code> — the Cloud Map namespace or service does not exist (also a <code>ValueError</code>).</li>
 <li><code>ImdsError</code> — the metadata service was unreachable or too slow (bounded by <code>imds_timeout</code>).</li>
 </ul>
 <p><code>botocore</code> exceptions from the AWS calls still surface as-is, so <code>except ZonalError</code> does <strong>not</strong>
@@ -941,7 +946,7 @@ catch those.</p>
 <li><code>Router(breaker_cooldown=10.0, clock=time.monotonic)</code> — the host cache, round-robin picker and
   circuit breaker each balancer wraps. Exported for direct use and testing.</li>
 <li><code>imds</code> — <code>get_az_id(timeout=2.0)</code> and <code>metadata(timeout=2.0)</code>, over IMDSv2. Both are cached for
-  the process (the values are immutable for the instance's lifetime, and caching both keeps them
+  the process whatever <code>timeout</code> they are called with (the values are immutable for the instance's lifetime, and caching both keeps them
   from disagreeing); the dict <code>metadata()</code> returns is shared, so treat it as read-only. Transport
   failures raise <code>ImdsError</code>. Off EC2, don't reach for IMDS at all — pass <code>az_id=</code> to a balancer or
   <code>metadata=</code> to <code>register_instance</code>.</li>

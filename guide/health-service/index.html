@@ -714,7 +714,9 @@ on its own behalf.</p>
 </code></pre></div>
 <p>If your hosts register under non-default Cloud Map attribute keys, the daemon has to be told, or it
 lists instances it cannot parse and sweeps zero hosts. <code>--endpoint-url</code> points it at a VPC endpoint
-or a local emulator:</p>
+or a local emulator. AWS serves Cloud Map's control plane and data plane from separate interface
+endpoints (<code>servicediscovery</code> and <code>data-servicediscovery</code>), and the daemon calls both, so behind
+VPC endpoints without private DNS pass the data-plane one as <code>--discovery-endpoint-url</code>:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>zonal-healthcheck<span class="w"> </span>--namespace<span class="w"> </span>services.internal<span class="w"> </span>--service<span class="w"> </span>backend<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">    </span>--ip-attribute<span class="w"> </span>MY_IPV4<span class="w"> </span>--port-attribute<span class="w"> </span>MY_PORT<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span>--endpoint-url<span class="w"> </span>http://localhost:4566
@@ -763,10 +765,9 @@ a systemd unit or a small ECS/Fargate task.</p>
 </div>
 <div class="admonition tip">
 <p class="admonition-title">Embedding <code>HealthChecker</code> instead of running the CLI</p>
-<p>Probes share one thread pool across sweeps. <code>run()</code> releases it when <code>stop()</code> makes it return,
-so the daemon path needs nothing extra — but if you drive sweeps yourself with <code>run_once()</code>,
-use the checker as a context manager (or call <code>close()</code>), otherwise its worker threads stay
-alive as long as the object does.</p>
+<p>Probes share one thread pool across sweeps. <code>run()</code>, <code>stop()</code>, <code>close()</code> and the context
+manager all release it, and a later <code>run_once()</code> builds a fresh one — so whether you run the
+loop or drive sweeps yourself, stopping the checker is enough.</p>
 </div>
 
 
