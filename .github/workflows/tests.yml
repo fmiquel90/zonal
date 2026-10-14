@@ -53,21 +53,27 @@ jobs:
 
       - name: Test
         # -rs lists anything that skipped, so an emulator gap is visible in the log instead of
-        # passing silently.
-        run: python -m pytest -v -rs
+        # passing silently. The JUnit report feeds the guard below, so the suite runs once.
+        run: python -m pytest -v -rs --junitxml=report.xml
 
       - name: Guard against a silently-skipped end-to-end suite
         # A skip is a legitimate outcome locally (no emulator), but in CI the emulator is
         # guaranteed up, so a skipped integration test means the suite stopped covering the thing
-        # it exists to cover.
+        # it exists to cover. Integration tests are the tests/test_integration_* modules.
         run: |
-          python -m pytest -m integration -q --no-header -rN > result.txt 2>&1 || true
-          cat result.txt
-          if grep -qE '[0-9]+ skipped' result.txt; then
-            echo "::error::integration tests skipped while MiniStack was up"
-            exit 1
-          fi
-          grep -qE '[0-9]+ passed' result.txt || { echo "::error::no integration test ran"; exit 1; }
+          python - <<'EOF'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          cases = [c for c in ET.parse("report.xml").iter("testcase")
+                   if ".test_integration_" in c.get("classname", "")]
+          skipped = [c.get("name") for c in cases if c.find("skipped") is not None]
+          for name in skipped:
+              print(f"::error::integration test skipped while MiniStack was up: {name}")
+          if not cases:
+              print("::error::no integration test ran")
+          sys.exit(1 if skipped or not cases else 0)
+          EOF
 
       - name: MiniStack log
         if: failure()
