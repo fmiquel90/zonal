@@ -27,15 +27,19 @@ def poll_forever(
     failure_event: str,
     *,
     jitter: float = 0.0,
+    fatal: tuple[type[Exception], ...] = (),
 ) -> None:
     """Run `step` every `interval` seconds until `stop` is set, absorbing any exception it raises.
 
     Failures are logged and retried on the next tick rather than killing the daemon — for both
-    callers a transient AWS error must not take the process down.
+    callers a transient AWS error must not take the process down. `fatal` exceptions are the
+    exception: ones no retry can fix, which propagate instead.
     """
     while not stop.is_set():
         try:
             step()
+        except fatal:
+            raise
         except Exception:
             log.warning(failure_event, exc_info=True)
         stop.wait(interval + random.uniform(0, jitter))
@@ -53,6 +57,9 @@ class BalancerBase:
 
     def __init__(self, config: DiscoveryConfig, az_id: str | None, logger_name: str):
         self._cfg = config
+        # "" (an unset env var passed straight through) means auto-detect, as None does; kept
+        # literally it would silently turn AZ affinity off.
+        az_id = az_id or None
         self._az_id = az_id
         self._router = Router(config.breaker_cooldown)
         self._log = get_logger(logger_name).bind(

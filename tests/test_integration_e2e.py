@@ -18,6 +18,7 @@ from zonal import (
     register_instance,
     deregister_instance,
 )
+from zonal.config import DEFAULT_MAX_ATTEMPTS
 from tests.conftest import ENDPOINT, REGION
 
 pytestmark = pytest.mark.integration
@@ -125,7 +126,13 @@ def test_discovery_failure_keeps_the_stale_cache(sd, cloud_map_service, backends
         assert balancer.pick() == warm[0], "pick() stopped working while discovery was down"
 
         breakable_endpoint.heal()
-        assert until(lambda: balancer.hosts() == warm), "did not recover once discovery came back"
+        # change the topology, so recovery is only observable through a refresh that succeeded
+        # after the heal — the untouched cache would equal `warm` even if the loop stayed stuck
+        fresh = backends("euw1-az1")
+        _register(sd, svc, fresh, "i-fresh")
+        assert until(lambda: _ports(balancer) == {backend.port, fresh.port}), (
+            "did not recover once discovery came back"
+        )
 
 
 def test_deregistered_host_leaves_the_cache_and_comes_back(sd, cloud_map_service, backends):
@@ -189,7 +196,7 @@ def test_a_silent_endpoint_fails_fast_instead_of_blocking(sd, cloud_map_service,
         balancer._refresh_once()
     elapsed = time.monotonic() - started
 
-    budget = (cfg.connect_timeout + cfg.read_timeout) * cfg.max_attempts + 5  # + retry backoff
+    budget = (cfg.connect_timeout + cfg.read_timeout) * DEFAULT_MAX_ATTEMPTS + 5  # + retry backoff
     assert elapsed < budget, f"a silent endpoint blocked for {elapsed:.1f}s (budget {budget:.1f}s)"
     # and the cache the warm-up filled is still intact
     assert balancer.hosts(), "the failed refresh emptied the cache"

@@ -192,7 +192,8 @@ pass `az_id`; `sd_client` injects a preconfigured boto3 client (tests, custom en
 | `.report_failure(host)` / `.report_success(host)` | feed the local circuit breaker |
 | `.hosts() -> tuple[Host, ...]` | current cached (effective) host set |
 | `.az_id` | the caller's resolved AZ-ID |
-| `.close()` | stop the refresh loop |
+| `.close()` | stop the refresh loop (non-blocking) |
+| `.wait_closed(timeout=None) -> bool` | block until the loop has stopped after `close()`; `False` on timeout |
 
 `AsyncBalancer(config, *, boto_session=None, az_id=None)` mirrors it — `start` / `wait_ready` /
 `lease` are async (`await` / `async with`); `pick`, `report_*` and `hosts` stay synchronous. It

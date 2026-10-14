@@ -66,17 +66,18 @@ class Balancer(BalancerBase):
         else:
             self.report_success(host)
 
-    def close(self, timeout: float | None = None) -> bool:
-        """Stop the refresh loop. Returns True once it has actually stopped.
-
-        Returns immediately by default — the thread is a daemon, so it never holds up process
-        exit. Pass a timeout to wait for it: the interval sleep is interruptible, but a discovery
-        call already in flight still has to finish or time out first (bounded by the config's
-        connect/read timeouts), so budget at least that.
-        """
+    def close(self) -> None:
+        """Stop the refresh loop, without waiting for it: the thread is a daemon, so it never
+        holds up process exit. Use wait_closed() to wait."""
         self._stop.set()
-        if timeout is None:
-            return not self._thread.is_alive()
+
+    def wait_closed(self, timeout: float | None = None) -> bool:
+        """Block until the refresh loop has stopped after close(); False on timeout.
+
+        The interval sleep is interruptible, but a discovery call already in flight still has to
+        finish or time out first (bounded by the config's connect/read timeouts), so budget at
+        least that.
+        """
         self._thread.join(timeout)
         return not self._thread.is_alive()
 

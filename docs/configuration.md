@@ -10,7 +10,7 @@ All configuration is plain dataclasses from `zonal.config`.
 | `region` | `None` | AWS region |
 | `endpoint_url` | `None` | custom Cloud Map endpoint (VPC endpoint, or MiniStack in tests) |
 | `connect_timeout` / `read_timeout` | `2.0` / `3.0` | per-request bounds on every Cloud Map call (seconds) |
-| `max_attempts` | `2` | total Cloud Map requests per call, the first one included |
+| `max_attempts` | `None` | total Cloud Map requests per call, the first one included; `None` defers to `AWS_MAX_ATTEMPTS` / `AWS_RETRY_MODE` or the profile when either is set, else uses 2 |
 | `imds_timeout` | `2.0` | bound on the IMDS lookup behind an auto-detected AZ-ID (seconds) |
 | `refresh_interval` / `refresh_jitter` | `5.0` / `1.0` | background discovery cadence (seconds) |
 | `breaker_cooldown` | `10.0` | local eject duration after `report_failure` (seconds) |
@@ -29,8 +29,8 @@ All configuration is plain dataclasses from `zonal.config`.
 | `region` | `None` | AWS region |
 | `endpoint_url` | `None` | custom Cloud Map endpoint (VPC endpoint, or an emulator) |
 | `connect_timeout` / `read_timeout` | `2.0` / `3.0` | per-request bounds on every Cloud Map call (seconds) |
-| `max_attempts` | `2` | total Cloud Map requests per call, the first one included |
-| `imds_timeout` | `2.0` | bound on the IMDS lookup behind an auto-detected AZ-ID (seconds) |
+| `max_attempts` | `None` | total Cloud Map requests per call, the first one included; `None` defers to `AWS_MAX_ATTEMPTS` / `AWS_RETRY_MODE` or the profile when either is set, else uses 5 — registration runs once at boot with nothing behind it to retry |
+| `imds_timeout` | `2.0` | per-request bound on the IMDS lookups (instance id, IP, AZ-ID, region) made when `metadata=` is not passed (seconds) |
 | `az_attribute` | `AZID` | Cloud Map attribute key the AZ-ID is written under |
 | `extra_attributes` | `{}` | additional Cloud Map instance attributes |
 | `ip_attribute` | `AWS_INSTANCE_IPV4` | Cloud Map attribute key the host IP is written under |
@@ -43,18 +43,19 @@ All configuration is plain dataclasses from `zonal.config`.
 | `namespace`, `service` | — | service to monitor |
 | `service_id` | `None` | resolved from `namespace`+`service` if omitted |
 | `region` | `None` | AWS region |
-| `endpoint_url` | `None` | custom Cloud Map endpoint (VPC endpoint, or an emulator) |
+| `endpoint_url` | `None` | custom endpoint for the control-plane calls: status pushes and the service-id lookup (`servicediscovery` VPC endpoint, or an emulator) |
+| `discovery_endpoint_url` | `endpoint_url` | custom endpoint for `DiscoverInstances` (the `data-servicediscovery` VPC endpoint). AWS serves the two planes from separate VPC endpoint services, so the daemon needs both when you use interface endpoints without private DNS |
 | `connect_timeout` / `read_timeout` | `2.0` / `3.0` | per-request bounds on every Cloud Map call (seconds) |
-| `max_attempts` | `2` | total Cloud Map requests per call, the first one included |
+| `max_attempts` | `None` | total Cloud Map requests per call, the first one included; `None` defers to `AWS_MAX_ATTEMPTS` / `AWS_RETRY_MODE` or the profile when either is set, else uses 2 |
 | `health_path` / `scheme` | `/health` / `http` | probe target |
 | `interval` / `timeout` | `10.0` / `2.0` | sweep cadence and per-probe timeout (seconds) |
 | `healthy_threshold` / `unhealthy_threshold` | `2` / `3` | consecutive probes before flipping status |
-| `concurrency` | `16` | parallel probes per sweep |
+| `concurrency` | `16` | parallel probes per sweep; must be at least 1 |
 | `ip_attribute` | `AWS_INSTANCE_IPV4` | Cloud Map attribute holding the host IP |
 | `port_attribute` | `AWS_INSTANCE_PORT` | Cloud Map attribute holding the host port |
 | `az_attribute` | `AZID` | attribute parsed onto `Host.az`; the daemon does not route on AZ, so a wrong value here is inert |
 
-All of these are CLI flags too: `--endpoint-url`, `--ip-attribute`, `--port-attribute`,
+All of these are CLI flags too: `--endpoint-url`, `--discovery-endpoint-url`, `--ip-attribute`, `--port-attribute`,
 `--az-attribute`, and — prefixed so they don't read as variants of `--timeout`, which bounds the
 `/health` probe — `--aws-connect-timeout`, `--aws-read-timeout`, `--aws-max-attempts`.
 
