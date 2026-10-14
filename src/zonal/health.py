@@ -6,14 +6,10 @@ import boto3
 import requests
 
 from ._base import poll_forever
-from .config import HealthConfig
+from .config import DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT, HealthConfig
 from .discovery import client_config, parse_instances
 from .log import configure_json_logging, get_logger
-from .model import Host
-
-# Per-thread connection pools to cache, i.e. how many distinct hosts a probe thread can keep
-# connections open to. Above this, requests' LRU evicts and those hosts reconnect each sweep.
-_PROBE_POOL_HOSTS = 64
+from .model import Host, ServiceNotFoundError
 
 
 def resolve_service_id(sd, namespace_name: str, service_name: str) -> str:
@@ -28,7 +24,7 @@ def resolve_service_id(sd, namespace_name: str, service_name: str) -> str:
         None,
     )
     if not ns_id:
-        raise ValueError(f"namespace {namespace_name!r} not found")
+        raise ServiceNotFoundError(f"namespace {namespace_name!r} not found")
     service_id = next(
         (
             svc["Id"]
@@ -41,7 +37,9 @@ def resolve_service_id(sd, namespace_name: str, service_name: str) -> str:
         None,
     )
     if not service_id:
-        raise ValueError(f"service {service_name!r} not found in namespace {namespace_name!r}")
+        raise ServiceNotFoundError(
+            f"service {service_name!r} not found in namespace {namespace_name!r}"
+        )
     return service_id
 
 
@@ -69,13 +67,25 @@ class HealthChecker:
             endpoint_url=config.endpoint_url,
             config=client_config(config),
         )
+        discovery_url = config.discovery_endpoint_url
+        if sd_client is None and discovery_url and discovery_url != config.endpoint_url:
+            self._discovery = boto3.client(
+                "servicediscovery",
+                region_name=config.region,
+                endpoint_url=discovery_url,
+                config=client_config(config, discovery_url),
+            )
+        else:
+            self._discovery = self._sd
         # Not resolved here: that would be paginated network I/O in a constructor, so the object
         # could not be built without live AWS, and a throttle at boot would kill the process
-        # instead of being absorbed by the run() loop that exists for exactly that.
-        self._service_id = config.service_id
+        # instead of being absorbed by the run() loop that exists for exactly that. A missing
+        # namespace or service is still fatal, see run(). "" (an unset env var) means resolve.
+        self._service_id = config.service_id or None
         self._session = session
         self._local = threading.local()
         self._pool: cf.ThreadPoolExecutor | None = None  # created on first sweep, see _probe_all
+        self._pool_lock = threading.Lock()  # close() can run on another thread mid-sweep
         self._stop = threading.Event()
         self._state: dict[str, _InstanceState] = {}
         self._log = get_logger("zonal.health").bind(
@@ -93,7 +103,7 @@ class HealthChecker:
         return self._service_id
 
     def _list_instances(self) -> list[Host]:
-        resp = self._sd.discover_instances(
+        resp = self._discovery.discover_instances(
             NamespaceName=self._cfg.namespace, ServiceName=self._cfg.service, HealthStatus="ALL"
         )
         return parse_instances(resp, self._cfg)
@@ -103,20 +113,24 @@ class HealthChecker:
 
         The pool outlives a sweep so its threads (and their sessions) are not rebuilt every
         interval, and is created lazily so close() can release it and a later sweep still works.
+        map() submits every probe before returning, so holding the lock across it is enough: a
+        pool shut down after that still runs what was already queued.
         """
-        if self._pool is None:
-            self._pool = cf.ThreadPoolExecutor(
-                max_workers=self._cfg.concurrency, thread_name_prefix="zonal-probe"
-            )
-        return self._pool.map(self._probe, hosts)
+        with self._pool_lock:
+            if self._pool is None:
+                self._pool = cf.ThreadPoolExecutor(
+                    max_workers=self._cfg.concurrency, thread_name_prefix="zonal-probe"
+                )
+            return self._pool.map(self._probe, hosts)
 
     def _http(self) -> requests.Session:
         """The session this thread probes with.
 
         Probes run concurrently and requests.Session is not guaranteed thread-safe, so the default
         path gives each pool thread its own, avoiding the per-call Session build that requests.get
-        does. Connections also survive between sweeps, though only for the last `pool_connections`
-        distinct hosts a given thread touched — a fleet much larger than that still reconnects.
+        does. Probes do not keep connections alive: any thread may probe any host, so pooling
+        would hold up to concurrency x hosts idle sockets open between sweeps, and a fresh
+        connection is also the honest test of whether a host still accepts them.
         An injected session (tests) is used as-is.
         """
         if self._session is not None:
@@ -124,9 +138,7 @@ class HealthChecker:
         session = getattr(self._local, "session", None)
         if session is None:
             session = self._local.session = requests.Session()
-            adapter = requests.adapters.HTTPAdapter(pool_connections=_PROBE_POOL_HOSTS, pool_maxsize=2)
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
+            session.headers["Connection"] = "close"
         return session
 
     def _probe(self, host: Host) -> bool:
@@ -182,22 +194,35 @@ class HealthChecker:
         self._log.debug("health_sweep", total=total, healthy=healthy, unhealthy=total - healthy)
 
     def run(self) -> None:
+        """Sweep every `interval` until stop(). Transient failures are logged and retried; a
+        namespace or service that does not exist raises ServiceNotFoundError, since no retry
+        fixes it and a daemon that never pushes a status would leave hung hosts in rotation."""
         self._log.info("health_service_started", interval=self._cfg.interval)
         try:
             poll_forever(
-                self._stop, self._cfg.interval, self.run_once, self._log, "health_sweep_failed"
+                self._stop,
+                self._cfg.interval,
+                self.run_once,
+                self._log,
+                "health_sweep_failed",
+                fatal=(ServiceNotFoundError,),
             )
+        except ServiceNotFoundError:
+            self._log.error("health_service_misconfigured", exc_info=True)
+            raise
         finally:
             self.close()
 
     def stop(self) -> None:
-        """Ask run() to finish its current sweep and return. Safe to call from another thread."""
+        """Ask run() to finish its current sweep and return, and release the probe pool.
+        Safe to call from another thread."""
         self._stop.set()
+        self.close()
 
     def close(self) -> None:
-        """Release the probe pool. run() does this on exit; call it yourself if you only use
-        run_once(), or use the checker as a context manager."""
-        pool, self._pool = self._pool, None
+        """Release the probe pool. run() and stop() do this; a later run_once() builds a new one."""
+        with self._pool_lock:
+            pool, self._pool = self._pool, None
         if pool is not None:
             pool.shutdown(wait=False)
 
@@ -206,7 +231,6 @@ class HealthChecker:
 
     def __exit__(self, *exc) -> None:
         self.stop()
-        self.close()
 
 
 def main(argv=None) -> None:
@@ -218,6 +242,11 @@ def main(argv=None) -> None:
     p.add_argument("--service-id")
     p.add_argument("--region")
     p.add_argument("--endpoint-url", help="custom Cloud Map endpoint (VPC endpoint, or an emulator)")
+    p.add_argument(
+        "--discovery-endpoint-url",
+        help="custom endpoint for DiscoverInstances (the data-plane VPC endpoint); "
+        "defaults to --endpoint-url",
+    )
     p.add_argument("--health-path", default="/health")
     p.add_argument("--scheme", default="http")
     p.add_argument("--interval", type=float, default=10.0)
@@ -228,9 +257,14 @@ def main(argv=None) -> None:
     # Must match whatever RegisterConfig wrote and DiscoveryConfig reads, or the daemon lists
     # instances it cannot parse and silently sweeps nothing.
     # `aws-` prefixed so they don't read as variants of --timeout, which bounds the /health probe
-    p.add_argument("--aws-connect-timeout", type=float, default=2.0)
-    p.add_argument("--aws-read-timeout", type=float, default=3.0)
-    p.add_argument("--aws-max-attempts", type=int, default=2, help="total Cloud Map requests, retries included")
+    p.add_argument("--aws-connect-timeout", type=float, default=DEFAULT_CONNECT_TIMEOUT)
+    p.add_argument("--aws-read-timeout", type=float, default=DEFAULT_READ_TIMEOUT)
+    p.add_argument(
+        "--aws-max-attempts",
+        type=int,
+        help="total Cloud Map requests, retries included (default: AWS_MAX_ATTEMPTS or the "
+        "profile if set, else 2)",
+    )
     p.add_argument("--az-attribute", default="AZID")
     p.add_argument("--ip-attribute", default="AWS_INSTANCE_IPV4")
     p.add_argument("--port-attribute", default="AWS_INSTANCE_PORT")
@@ -244,6 +278,7 @@ def main(argv=None) -> None:
         service_id=args.service_id,
         region=args.region,
         endpoint_url=args.endpoint_url,
+        discovery_endpoint_url=args.discovery_endpoint_url,
         health_path=args.health_path,
         scheme=args.scheme,
         interval=args.interval,

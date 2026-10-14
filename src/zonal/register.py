@@ -1,7 +1,7 @@
 import boto3
 
 from . import imds
-from .config import RegisterConfig
+from .config import REGISTER_MAX_ATTEMPTS, RegisterConfig
 from .discovery import _boto_config, client_config
 from .log import get_logger
 
@@ -62,7 +62,7 @@ def deregister_instance(
         "servicediscovery",
         region_name=region,
         endpoint_url=endpoint_url,
-        config=_boto_config(endpoint_url),
+        config=_boto_config(endpoint_url, default_attempts=REGISTER_MAX_ATTEMPTS),
     )
     sd.deregister_instance(ServiceId=service_id, InstanceId=instance_id)
     log.info("deregistered", service_id=service_id, instance_id=instance_id)

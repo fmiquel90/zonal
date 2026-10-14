@@ -53,3 +53,23 @@ def test_select_falls_back_to_all_when_no_same_az():
 
 def test_select_no_affinity_returns_all():
     assert select_hosts([_A, _C], "euw1-az1", False) == ([_A, _C], False)
+
+
+def test_retries_default_to_zonal_bound_and_defer_to_the_operator(monkeypatch):
+    from zonal import RegisterConfig
+    from zonal.discovery import client_config
+
+    for var in ("AWS_MAX_ATTEMPTS", "AWS_RETRY_MODE", "AWS_PROFILE", "AWS_CONFIG_FILE"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("AWS_CONFIG_FILE", "/nonexistent")
+    caller = DiscoveryConfig(namespace="n", service="s")
+    assert client_config(caller).retries == {"total_max_attempts": 2, "mode": "standard"}
+    # registration has no loop behind it to retry a boot-time throttle
+    reg = RegisterConfig(service_id="srv", port=80)
+    assert client_config(reg).retries["total_max_attempts"] == 5
+
+    monkeypatch.setenv("AWS_RETRY_MODE", "adaptive")
+    assert client_config(caller).retries is None, "overrode the operator's AWS_RETRY_MODE"
+    # an explicit config value still wins over the environment
+    explicit = DiscoveryConfig(namespace="n", service="s", max_attempts=4)
+    assert client_config(explicit).retries["total_max_attempts"] == 4

@@ -1,7 +1,7 @@
 import asyncio
 import random
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 import aioboto3
 
@@ -33,6 +33,7 @@ class AsyncBalancer(BalancerBase):
             self._resolve_az_id()
         self._boto = boto_session or aioboto3.Session()
         self._task: asyncio.Task | None = None
+        self._clients = AsyncExitStack()
         self._ready = asyncio.Event()
         self._closing = False
 
@@ -40,7 +41,18 @@ class AsyncBalancer(BalancerBase):
         if self._az_id is None:
             # imds.get_az_id blocks on a socket; run_in_executor keeps the loop serving while it does
             await asyncio.get_running_loop().run_in_executor(None, self._resolve_az_id)
-        self._task = asyncio.create_task(self._loop(), name="zonal-refresh")
+        # Built here, not in the task: a bad config (no region, max_attempts=0) must raise to the
+        # caller, as the sync client's constructor does. Inside the task it would kill the loop
+        # silently and leave wait_ready() pending forever.
+        sd = await self._clients.enter_async_context(
+            self._boto.client(
+                "servicediscovery",
+                region_name=self._cfg.region,
+                endpoint_url=self._cfg.endpoint_url,
+                config=client_config(self._cfg),
+            )
+        )
+        self._task = asyncio.create_task(self._loop(sd), name="zonal-refresh")
         return self
 
     async def wait_ready(self, timeout: float | None = None) -> bool:
@@ -56,22 +68,16 @@ class AsyncBalancer(BalancerBase):
         except asyncio.TimeoutError:
             return False
 
-    async def _loop(self) -> None:
-        async with self._boto.client(
-            "servicediscovery",
-            region_name=self._cfg.region,
-            endpoint_url=self._cfg.endpoint_url,
-            config=client_config(self._cfg),
-        ) as sd:
-            while not self._closing:
-                try:
-                    # keep the stale cache on failure: stale-but-working beats an empty cache
-                    self._apply(await sd.discover_instances(**self._discover_kwargs()))
-                except Exception:
-                    self._log.warning("discovery_refresh_failed", exc_info=True)
-                await asyncio.sleep(
-                    self._cfg.refresh_interval + random.uniform(0, self._cfg.refresh_jitter)
-                )
+    async def _loop(self, sd) -> None:
+        while not self._closing:
+            try:
+                # keep the stale cache on failure: stale-but-working beats an empty cache
+                self._apply(await sd.discover_instances(**self._discover_kwargs()))
+            except Exception:
+                self._log.warning("discovery_refresh_failed", exc_info=True)
+            await asyncio.sleep(
+                self._cfg.refresh_interval + random.uniform(0, self._cfg.refresh_jitter)
+            )
 
     @asynccontextmanager
     async def lease(self) -> AsyncIterator[Host]:
@@ -93,6 +99,7 @@ class AsyncBalancer(BalancerBase):
                 await self._task
             except asyncio.CancelledError:
                 pass
+        await self._clients.aclose()
 
     async def __aenter__(self) -> "AsyncBalancer":
         return await self.start()

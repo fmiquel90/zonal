@@ -70,11 +70,14 @@ tasks:
     cmds:
       - mkdir -p {{.RUNDIR}}
       - |
-        # setsid detaches it from the task shell so it survives this process exiting. The pid is
-        # written from inside the child and then exec'd over, so the pidfile holds MiniStack's own
-        # pid — `$!` here would be setsid's, which forks and exits immediately.
-        setsid sh -c 'echo $$ > "$1"/ministack.pid; exec ministack' _ {{.RUNDIR}} \
-          > {{.RUNDIR}}/ministack.log 2>&1 < /dev/null &
+        # Detached into its own session so it survives this task exiting, and so a Ctrl-C here
+        # does not reach it. Python's start_new_session rather than setsid(1), which macOS lacks;
+        # Popen execs ministack directly, so the pidfile holds MiniStack's own pid.
+        python -c 'import subprocess, sys
+        d = sys.argv[1]
+        p = subprocess.Popen(["ministack"], stdin=subprocess.DEVNULL, stdout=open(d + "/ministack.log", "w"),
+                             stderr=subprocess.STDOUT, start_new_session=True)
+        open(d + "/ministack.pid", "w").write(str(p.pid))' {{.RUNDIR}}
         for _ in $(seq 1 60); do
           if curl -sf -o /dev/null {{.ENDPOINT}}; then
             echo "MiniStack listening on {{.ENDPOINT}}"

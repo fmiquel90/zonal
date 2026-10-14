@@ -26,15 +26,20 @@
   discovery failure keeps the last good host list (`discovery_refresh_failed` is logged) — stale but
   working beats an empty cache.
 - **Bounded Cloud Map calls.** Every client zonal builds carries a `connect_timeout`,
-  a `read_timeout` and an attempt cap (`2.0s` / `3.0s` / 2 by default), so a silent endpoint costs
+  a `read_timeout` and an attempt cap (`2.0s` / `3.0s` / 2 by default; 5 for registration, which
+  runs once at boot with nothing behind it to retry), so a silent endpoint costs
   the refresh loop about ten seconds rather than botocore's default of several minutes. The loop is
   itself the retry, and a failed refresh keeps the cache, so failing fast loses nothing. Note the
   balancer's refresh thread is a daemon: `close()` sets the stop flag but an in-flight call still
-  has to time out, so shutdown can lag by that budget.
+  has to time out, so shutdown can lag by that budget (`wait_closed(timeout)` waits for it). If you set `AWS_MAX_ATTEMPTS` or
+  `AWS_RETRY_MODE` (or `max_attempts` / `retry_mode` in the profile), zonal leaves the attempt cap
+  to them unless the config's own `max_attempts` is set.
 - **Starts-empty is safe.** `wait_ready()` returns once the first discovery completes, even if it
   found zero hosts; `pick()` then raises `NoHealthyHostError` rather than hanging.
 - **Custom endpoints.** All three configs take `endpoint_url` (and the daemon takes
   `--endpoint-url`), so callers, registering hosts and the health daemon can all be pointed at a
-  VPC endpoint or an emulator. Setting it also disables botocore's `data-` host prefix
+  VPC endpoint or an emulator. The daemon calls both Cloud Map planes, which AWS serves from separate
+  interface endpoints, so it also takes `discovery_endpoint_url` (`--discovery-endpoint-url`) for
+  `DiscoverInstances`. Setting it also disables botocore's `data-` host prefix
   automatically — `DiscoverInstances` is a data-plane call whose prefix resolves to nothing against
   a custom endpoint (you would see `data-localhost` in the error).

@@ -1,17 +1,34 @@
-from botocore.config import Config
+import os
 
-from .config import DiscoveryConfig, HealthConfig, RegisterConfig
+import botocore.session
+from botocore.config import Config
+from botocore.exceptions import ProfileNotFound
+
+from .config import (
+    DEFAULT_CONNECT_TIMEOUT,
+    DEFAULT_MAX_ATTEMPTS,
+    DEFAULT_READ_TIMEOUT,
+    REGISTER_MAX_ATTEMPTS,
+    DiscoveryConfig,
+    HealthConfig,
+    RegisterConfig,
+)
 from .model import Host
 
 
-# botocore defaults to a 60s connect and 60s read timeout with up to 5 attempts. Against an
-# endpoint that accepts connections and then goes silent — a black-holed VPC endpoint, a security
-# group change mid-flight — one DiscoverInstances call was measured blocking for over five minutes,
-# on a loop that runs every few seconds. Bound it instead: the refresh loop is itself the retry, a
-# failed refresh just keeps the stale cache, and a caller that needs more patience can raise these.
-DEFAULT_CONNECT_TIMEOUT = 2.0
-DEFAULT_READ_TIMEOUT = 3.0
-DEFAULT_MAX_ATTEMPTS = 2  # total requests, first one included — not the number of retries
+def _operator_set_retries() -> bool:
+    """Whether AWS_MAX_ATTEMPTS / AWS_RETRY_MODE or the active profile configure retries.
+
+    An explicit Config(retries=...) overrides those, so zonal only applies its own bound when
+    nobody has expressed a preference.
+    """
+    if os.environ.get("AWS_MAX_ATTEMPTS") or os.environ.get("AWS_RETRY_MODE"):
+        return True
+    try:
+        profile = botocore.session.Session().get_scoped_config()
+    except ProfileNotFound:
+        return False
+    return "max_attempts" in profile or "retry_mode" in profile
 
 
 def _boto_config(
@@ -19,13 +36,14 @@ def _boto_config(
     *,
     connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
     read_timeout: float = DEFAULT_READ_TIMEOUT,
-    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    max_attempts: int | None = None,
+    default_attempts: int = DEFAULT_MAX_ATTEMPTS,
 ) -> Config:
-    kwargs: dict = {
-        "connect_timeout": connect_timeout,
-        "read_timeout": read_timeout,
-        "retries": {"total_max_attempts": max_attempts, "mode": "standard"},
-    }
+    kwargs: dict = {"connect_timeout": connect_timeout, "read_timeout": read_timeout}
+    if max_attempts is None and not _operator_set_retries():
+        max_attempts = default_attempts
+    if max_attempts is not None:
+        kwargs["retries"] = {"total_max_attempts": max_attempts, "mode": "standard"}
     # DiscoverInstances is a data-plane call: botocore prepends a "data-" host prefix
     # (data-servicediscovery.<region>...). Against a custom endpoint (VPC endpoint, MiniStack,
     # LocalStack) that prefix points nowhere, so disable it whenever an endpoint is overridden.
@@ -34,13 +52,20 @@ def _boto_config(
     return Config(**kwargs)
 
 
-def client_config(cfg: "DiscoveryConfig | RegisterConfig | HealthConfig") -> Config:
-    """The botocore Config for any of zonal's config dataclasses."""
+def client_config(
+    cfg: "DiscoveryConfig | RegisterConfig | HealthConfig", endpoint_url: str | None = None
+) -> Config:
+    """The botocore Config for any of zonal's config dataclasses.
+
+    `endpoint_url` overrides the config's own, for the health daemon's second (data-plane) client.
+    """
+    one_shot = isinstance(cfg, RegisterConfig)
     return _boto_config(
-        cfg.endpoint_url,
+        endpoint_url or cfg.endpoint_url,
         connect_timeout=cfg.connect_timeout,
         read_timeout=cfg.read_timeout,
         max_attempts=cfg.max_attempts,
+        default_attempts=REGISTER_MAX_ATTEMPTS if one_shot else DEFAULT_MAX_ATTEMPTS,
     )
 
 
